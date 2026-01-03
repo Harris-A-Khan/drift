@@ -47,7 +47,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	ui.SubHeader("System Information")
 	ui.KeyValue("OS", runtime.GOOS)
 	ui.KeyValue("Arch", runtime.GOARCH)
-	ui.KeyValue("Drift Version", version)
+	ui.KeyValue("Drift", version)
 	ui.NewLine()
 
 	// Check required tools
