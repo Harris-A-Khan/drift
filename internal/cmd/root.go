@@ -58,7 +58,7 @@ func init() {
 
 	// Version flag
 	rootCmd.Version = version
-	rootCmd.SetVersionTemplate("drift version {{.Version}}\n")
+	rootCmd.SetVersionTemplate("drift {{.Version}}\n")
 }
 
 func initConfig() {
