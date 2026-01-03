@@ -1,0 +1,134 @@
+package config
+
+// DefaultConfig returns the default configuration values.
+func DefaultConfig() *Config {
+	return &Config{
+		Project: ProjectConfig{
+			Name: "",
+			Type: "ios",
+		},
+		Supabase: SupabaseConfig{
+			ProjectRefFile:    ".supabase-project-ref",
+			FunctionsDir:      "supabase/functions",
+			MigrationsDir:     "supabase/migrations",
+			ProtectedBranches: []string{"main", "master"},
+		},
+		APNS: APNSConfig{
+			TeamID:      "",
+			BundleID:    "",
+			KeyPattern:  "AuthKey_*.p8",
+			Environment: "development",
+		},
+		Xcode: XcodeConfig{
+			XcconfigOutput: "Config.xcconfig",
+			VersionFile:    "Version.xcconfig",
+			Schemes: map[string]string{
+				"production":  "",
+				"development": "",
+				"feature":     "",
+			},
+		},
+		Database: DatabaseConfig{
+			PGBin:       "/opt/homebrew/opt/postgresql@16/bin",
+			PoolerHost:  "aws-0-us-east-1.pooler.supabase.com",
+			PoolerPort:  6543,
+			DirectPort:  5432,
+			RequireSSL:  true,
+			DumpFormat:  "custom",
+			BackupDir:   "backups",
+			PromptFresh: true,
+		},
+		Backup: BackupConfig{
+			Provider:      "supabase",
+			Bucket:        "database-backups",
+			RetentionDays: 30,
+		},
+		Worktree: WorktreeConfig{
+			NamingPattern:    "{project}-{branch}",
+			CopyOnCreate:     []string{".env", "*.p8"},
+			AutoSetupXcconfig: true,
+		},
+	}
+}
+
+// MergeWithDefaults merges a loaded config with defaults for any missing values.
+func MergeWithDefaults(cfg *Config) *Config {
+	defaults := DefaultConfig()
+
+	// Project defaults
+	if cfg.Project.Type == "" {
+		cfg.Project.Type = defaults.Project.Type
+	}
+
+	// Supabase defaults
+	if cfg.Supabase.ProjectRefFile == "" {
+		cfg.Supabase.ProjectRefFile = defaults.Supabase.ProjectRefFile
+	}
+	if cfg.Supabase.FunctionsDir == "" {
+		cfg.Supabase.FunctionsDir = defaults.Supabase.FunctionsDir
+	}
+	if cfg.Supabase.MigrationsDir == "" {
+		cfg.Supabase.MigrationsDir = defaults.Supabase.MigrationsDir
+	}
+	if len(cfg.Supabase.ProtectedBranches) == 0 {
+		cfg.Supabase.ProtectedBranches = defaults.Supabase.ProtectedBranches
+	}
+
+	// APNS defaults
+	if cfg.APNS.KeyPattern == "" {
+		cfg.APNS.KeyPattern = defaults.APNS.KeyPattern
+	}
+	if cfg.APNS.Environment == "" {
+		cfg.APNS.Environment = defaults.APNS.Environment
+	}
+
+	// Xcode defaults
+	if cfg.Xcode.XcconfigOutput == "" {
+		cfg.Xcode.XcconfigOutput = defaults.Xcode.XcconfigOutput
+	}
+	if cfg.Xcode.VersionFile == "" {
+		cfg.Xcode.VersionFile = defaults.Xcode.VersionFile
+	}
+
+	// Database defaults
+	if cfg.Database.PGBin == "" {
+		cfg.Database.PGBin = defaults.Database.PGBin
+	}
+	if cfg.Database.PoolerHost == "" {
+		cfg.Database.PoolerHost = defaults.Database.PoolerHost
+	}
+	if cfg.Database.PoolerPort == 0 {
+		cfg.Database.PoolerPort = defaults.Database.PoolerPort
+	}
+	if cfg.Database.DirectPort == 0 {
+		cfg.Database.DirectPort = defaults.Database.DirectPort
+	}
+	if cfg.Database.DumpFormat == "" {
+		cfg.Database.DumpFormat = defaults.Database.DumpFormat
+	}
+	if cfg.Database.BackupDir == "" {
+		cfg.Database.BackupDir = defaults.Database.BackupDir
+	}
+
+	// Backup defaults
+	if cfg.Backup.Provider == "" {
+		cfg.Backup.Provider = defaults.Backup.Provider
+	}
+	if cfg.Backup.Bucket == "" {
+		cfg.Backup.Bucket = defaults.Backup.Bucket
+	}
+	if cfg.Backup.RetentionDays == 0 {
+		cfg.Backup.RetentionDays = defaults.Backup.RetentionDays
+	}
+
+	// Worktree defaults
+	if cfg.Worktree.NamingPattern == "" {
+		cfg.Worktree.NamingPattern = defaults.Worktree.NamingPattern
+	}
+	if len(cfg.Worktree.CopyOnCreate) == 0 {
+		cfg.Worktree.CopyOnCreate = defaults.Worktree.CopyOnCreate
+	}
+
+	return cfg
+}
+

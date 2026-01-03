@@ -1,0 +1,108 @@
+version: 2
+
+project_name: drift
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: drift
+    main: ./cmd/drift
+    binary: drift
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: drift
+    formats: ['tar.gz']
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+
+brews:
+  - name: drift
+    repository:
+      owner: undrift
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/undrift/drift"
+    description: "Opinionated development workflow CLI for Supabase projects"
+    license: "MIT"
+    install: |
+      bin.install "drift"
+    test: |
+      system "#{bin}/drift", "--version"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    skip_upload: auto
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: undrift
+    name: drift
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## drift {{ .Version }}
+    
+    Opinionated development workflow CLI for Supabase projects.
+  footer: |
+    ---
+    
+    ### Installation
+    
+    ```bash
+    # macOS (Homebrew)
+    brew install undrift/tap/drift
+    
+    # Or download directly from the release assets
+    ```
+
+# Optional: Sign binaries
+# signs:
+#   - cmd: gpg
+#     artifacts: checksum
+

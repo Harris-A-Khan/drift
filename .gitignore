@@ -1,0 +1,54 @@
+# Binaries
+bin/
+/drift
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build output
+dist/
+
+# Test binary
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.html
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Backups
+*.backup
+*.bak
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local config overrides
+.drift.local.yaml
+
+# Debug
+debug
+__debug_bin
+
