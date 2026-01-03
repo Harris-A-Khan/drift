@@ -34,11 +34,11 @@ archives:
 brews:
   - name: drift
     repository:
-      owner: undrift
+      owner: Harris-A-Khan
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://github.com/undrift/drift"
+    homepage: "https://github.com/Harris-A-Khan/drift"
     description: "Opinionated development workflow CLI for Supabase projects"
     license: "MIT"
     install: |
@@ -80,24 +80,24 @@ changelog:
 
 release:
   github:
-    owner: undrift
+    owner: Harris-A-Khan
     name: drift
   draft: false
   prerelease: auto
   mode: append
   header: |
     ## drift {{ .Version }}
-    
+
     Opinionated development workflow CLI for Supabase projects.
   footer: |
     ---
-    
+
     ### Installation
-    
+
     ```bash
     # macOS (Homebrew)
-    brew install undrift/tap/drift
-    
+    brew install Harris-A-Khan/tap/drift
+
     # Or download directly from the release assets
     ```
 

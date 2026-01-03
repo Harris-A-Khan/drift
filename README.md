@@ -9,15 +9,35 @@ Opinionated development workflow CLI for Supabase-backed iOS/macOS projects.
 ### Homebrew (recommended)
 
 ```bash
-brew install undrift/tap/drift
+brew install Harris-A-Khan/tap/drift
 ```
 
-### From Source
+### From Source (recommended for development)
 
 ```bash
-git clone https://github.com/undrift/drift.git
+git clone https://github.com/Harris-A-Khan/drift.git
 cd drift
-make install
+make install    # Installs to /usr/local/bin
+```
+
+### Go Install
+
+```bash
+go install github.com/Harris-A-Khan/drift/cmd/drift@latest
+```
+
+> **Note:** Requires `$GOPATH/bin` in your PATH. Add to `~/.zshrc`:
+> ```bash
+> export PATH="$PATH:$(go env GOPATH)/bin"
+> ```
+
+### Manual Build
+
+```bash
+git clone https://github.com/Harris-A-Khan/drift.git
+cd drift
+make build              # Creates bin/drift
+./bin/drift --version   # Run directly, or copy to a PATH location
 ```
 
 ## Quick Start
