@@ -347,7 +347,7 @@ func runWorktreeOpen(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no other worktrees to open")
 		}
 
-		idx, err := ui.PromptSelectWithIndex("Select worktree to open", options)
+		idx, _, err := ui.PromptSelectWithIndex("Select worktree to open", options)
 		if err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func runWorktreeDelete(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no worktrees available to delete")
 		}
 
-		idx, err := ui.PromptSelectWithIndex("Select worktree to delete", options)
+		idx, _, err := ui.PromptSelectWithIndex("Select worktree to delete", options)
 		if err != nil {
 			return err
 		}
