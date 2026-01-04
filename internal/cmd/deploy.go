@@ -47,6 +47,13 @@ var deployStatusCmd = &cobra.Command{
 	RunE:  runDeployStatus,
 }
 
+var deployListSecretsCmd = &cobra.Command{
+	Use:   "list-secrets",
+	Short: "List secrets on target environment",
+	Long:  `List all secrets configured on the target Supabase environment.`,
+	RunE:  runDeployListSecrets,
+}
+
 var (
 	deployBranchFlag string
 )
@@ -56,11 +63,13 @@ func init() {
 	deployFunctionsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deploySecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deployAllCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
+	deployListSecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 
 	deployCmd.AddCommand(deployFunctionsCmd)
 	deployCmd.AddCommand(deploySecretsCmd)
 	deployCmd.AddCommand(deployAllCmd)
 	deployCmd.AddCommand(deployStatusCmd)
+	deployCmd.AddCommand(deployListSecretsCmd)
 	rootCmd.AddCommand(deployCmd)
 }
 
@@ -311,6 +320,61 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 		}
 		ui.Infof("Total: %d functions", len(functions))
 	}
+
+	return nil
+}
+
+func runDeployListSecrets(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+
+	// Get target environment
+	sp := ui.NewSpinner("Resolving target environment")
+	sp.Start()
+
+	info, err := getDeployTarget()
+	if err != nil {
+		sp.Fail("Failed to resolve environment")
+		return err
+	}
+	sp.Stop()
+
+	ui.Header("Secrets")
+	ui.KeyValue("Environment", envColorString(string(info.Environment)))
+	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
+	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsFallback {
+		ui.Warning("Using fallback environment")
+	}
+
+	ui.NewLine()
+
+	// List secrets
+	client := supabase.NewClient()
+	sp = ui.NewSpinner("Fetching secrets")
+	sp.Start()
+
+	secrets, err := client.ListSecrets(info.ProjectRef)
+	if err != nil {
+		sp.Fail("Failed to list secrets")
+		return err
+	}
+	sp.Stop()
+
+	if len(secrets) == 0 {
+		ui.Info("No secrets configured")
+		return nil
+	}
+
+	ui.SubHeader("Configured Secrets")
+	for _, secret := range secrets {
+		ui.List(secret)
+	}
+
+	ui.NewLine()
+	ui.Infof("Total: %d secrets", len(secrets))
 
 	return nil
 }

@@ -198,3 +198,15 @@ func IsCLIInstalled() bool {
 	return shell.CommandExists("supabase")
 }
 
+// RunCommand runs an arbitrary command and returns combined output.
+func RunCommand(name string, args ...string) (string, error) {
+	result, err := shell.Run(name, args...)
+	if err != nil {
+		if result != nil {
+			return result.Stderr, err
+		}
+		return "", err
+	}
+	return result.Stdout, nil
+}
+

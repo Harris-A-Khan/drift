@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -9,6 +11,7 @@ import (
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
 	"github.com/undrift/drift/internal/xcode"
+	"github.com/undrift/drift/pkg/shell"
 )
 
 var envCmd = &cobra.Command{
@@ -50,11 +53,13 @@ var envSwitchCmd = &cobra.Command{
 }
 
 var (
-	envBranchFlag string
+	envBranchFlag      string
+	envBuildServerFlag bool
 )
 
 func init() {
 	envSetupCmd.Flags().StringVarP(&envBranchFlag, "branch", "b", "", "Override Supabase branch selection")
+	envSetupCmd.Flags().BoolVar(&envBuildServerFlag, "build-server", false, "Also generate buildServer.json for sourcekit-lsp")
 
 	envCmd.AddCommand(envShowCmd)
 	envCmd.AddCommand(envSetupCmd)
@@ -182,6 +187,13 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 
 	sp.Success("Config.xcconfig generated")
 
+	// Generate buildServer.json if requested
+	if envBuildServerFlag {
+		if err := generateBuildServer(cfg, info); err != nil {
+			ui.Warning(fmt.Sprintf("Could not generate buildServer.json: %v", err))
+		}
+	}
+
 	// Display summary
 	ui.NewLine()
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
@@ -208,5 +220,149 @@ func envColorString(env string) string {
 	default:
 		return ui.Green(env)
 	}
+}
+
+// generateBuildServer generates buildServer.json for sourcekit-lsp support.
+// This enables better IDE integration for Swift projects in VS Code and other editors.
+func generateBuildServer(cfg *config.Config, info *supabase.BranchInfo) error {
+	// Check if xcode-build-server is installed
+	if !shell.CommandExists("xcode-build-server") {
+		ui.Warning("xcode-build-server not found")
+		ui.Info("Install with: brew install xcode-build-server")
+		return nil
+	}
+
+	// Find the Xcode project file
+	projectFile := ""
+	matches, _ := filepath.Glob("*.xcodeproj")
+	if len(matches) > 0 {
+		projectFile = matches[0]
+	} else {
+		// Try workspace
+		matches, _ = filepath.Glob("*.xcworkspace")
+		if len(matches) > 0 {
+			// Use workspace with -workspace flag instead
+			return generateBuildServerWithWorkspace(cfg, info, matches[0])
+		}
+		return fmt.Errorf("no .xcodeproj or .xcworkspace found")
+	}
+
+	// Determine scheme based on environment
+	scheme := getSchemeForEnvironment(cfg, info)
+	if scheme == "" {
+		return fmt.Errorf("could not determine Xcode scheme")
+	}
+
+	sp := ui.NewSpinner("Generating buildServer.json")
+	sp.Start()
+
+	// Run xcode-build-server config
+	result, err := shell.Run("xcode-build-server", "config", "-project", projectFile, "-scheme", scheme)
+	if err != nil {
+		sp.Fail("Failed to generate buildServer.json")
+		if result != nil && result.Stderr != "" {
+			return fmt.Errorf("%s", result.Stderr)
+		}
+		return err
+	}
+
+	sp.Success(fmt.Sprintf("buildServer.json generated for scheme: %s", scheme))
+	return nil
+}
+
+// generateBuildServerWithWorkspace generates buildServer.json using a workspace.
+func generateBuildServerWithWorkspace(cfg *config.Config, info *supabase.BranchInfo, workspace string) error {
+	scheme := getSchemeForEnvironment(cfg, info)
+	if scheme == "" {
+		return fmt.Errorf("could not determine Xcode scheme")
+	}
+
+	sp := ui.NewSpinner("Generating buildServer.json")
+	sp.Start()
+
+	result, err := shell.Run("xcode-build-server", "config", "-workspace", workspace, "-scheme", scheme)
+	if err != nil {
+		sp.Fail("Failed to generate buildServer.json")
+		if result != nil && result.Stderr != "" {
+			return fmt.Errorf("%s", result.Stderr)
+		}
+		return err
+	}
+
+	sp.Success(fmt.Sprintf("buildServer.json generated for scheme: %s", scheme))
+	return nil
+}
+
+// getSchemeForEnvironment determines the Xcode scheme based on environment.
+func getSchemeForEnvironment(cfg *config.Config, info *supabase.BranchInfo) string {
+	// First check config for explicit scheme mappings
+	if cfg.Xcode.Schemes != nil {
+		switch info.Environment {
+		case supabase.EnvProduction:
+			if scheme, ok := cfg.Xcode.Schemes["production"]; ok {
+				return scheme
+			}
+		case supabase.EnvDevelopment:
+			if scheme, ok := cfg.Xcode.Schemes["development"]; ok {
+				return scheme
+			}
+		default:
+			if scheme, ok := cfg.Xcode.Schemes["feature"]; ok {
+				return scheme
+			}
+		}
+	}
+
+	// Try to find schemes automatically
+	projectName := cfg.Project.Name
+	if projectName == "" {
+		// Try to get from xcodeproj name
+		matches, _ := filepath.Glob("*.xcodeproj")
+		if len(matches) > 0 {
+			projectName = matches[0][:len(matches[0])-len(".xcodeproj")]
+		}
+	}
+
+	// Try common naming patterns
+	patterns := []string{
+		fmt.Sprintf("%s (%s)", projectName, info.Environment),
+		fmt.Sprintf("%s-%s", projectName, info.Environment),
+		projectName,
+	}
+
+	// Check if any scheme exists
+	for _, pattern := range patterns {
+		if schemeExists(pattern) {
+			return pattern
+		}
+	}
+
+	// Return the project name as a fallback
+	return projectName
+}
+
+// schemeExists checks if a scheme exists in the project.
+func schemeExists(scheme string) bool {
+	// Check in xcuserdata or xcshareddata
+	patterns := []string{
+		fmt.Sprintf("*.xcodeproj/xcshareddata/xcschemes/%s.xcscheme", scheme),
+		fmt.Sprintf("*.xcodeproj/xcuserdata/*/xcschemes/%s.xcscheme", scheme),
+	}
+
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		if len(matches) > 0 {
+			return true
+		}
+	}
+
+	// Also check if we can list schemes
+	result, err := shell.Run("xcodebuild", "-list", "-json")
+	if err != nil {
+		return false
+	}
+
+	// Simple string check (not full JSON parsing for simplicity)
+	return len(result.Stdout) > 0 && (filepath.Base(scheme) != "" || os.Getenv("DRIFT_DEBUG") != "")
 }
 
