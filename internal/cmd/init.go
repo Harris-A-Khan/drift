@@ -65,8 +65,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Ask for project type
-	typeOptions := []string{"ios", "macos", "multiplatform"}
+	// Ask for project type (put detected type first)
+	typeOptions := []string{"ios", "macos", "multiplatform", "web"}
+	// Reorder to put detected type first
+	for i, opt := range typeOptions {
+		if opt == projectType {
+			typeOptions[0], typeOptions[i] = typeOptions[i], typeOptions[0]
+			break
+		}
+	}
 	idx, _, err := ui.PromptSelectWithIndex("Project type", typeOptions)
 	if err != nil {
 		return err
@@ -86,15 +93,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Detect APNs settings
-	teamID := detectTeamID()
-	bundleID := detectBundleID()
+	// Detect APNs settings (only for Apple platforms)
+	var teamID, bundleID string
+	if pType != "web" {
+		teamID = detectTeamID()
+		bundleID = detectBundleID()
 
-	if teamID == "" {
-		teamID, _ = ui.PromptString("APNs Team ID (optional)", "")
-	}
-	if bundleID == "" {
-		bundleID, _ = ui.PromptString("Bundle ID (optional)", "")
+		if teamID == "" {
+			teamID, _ = ui.PromptString("APNs Team ID (optional)", "")
+		}
+		if bundleID == "" {
+			bundleID, _ = ui.PromptString("Bundle ID (optional)", "")
+		}
 	}
 
 	// Create configuration
@@ -130,11 +140,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 	ui.SubHeader("Next Steps")
 	if supabaseProjectRef == "" {
 		ui.NumberedList(1, "Link Supabase project: supabase link")
-		ui.NumberedList(2, "Run 'drift env setup' to generate Config.xcconfig")
-		ui.NumberedList(3, "Add Config.xcconfig to your Xcode project")
+		if pType == "web" {
+			ui.NumberedList(2, "Run 'drift env setup' to generate .env.local")
+			ui.NumberedList(3, "Add .env.local to .gitignore")
+		} else {
+			ui.NumberedList(2, "Run 'drift env setup' to generate Config.xcconfig")
+			ui.NumberedList(3, "Add Config.xcconfig to your Xcode project")
+		}
 	} else {
-		ui.NumberedList(1, "Run 'drift env setup' to generate Config.xcconfig")
-		ui.NumberedList(2, "Add Config.xcconfig to your Xcode project")
+		if pType == "web" {
+			ui.NumberedList(1, "Run 'drift env setup' to generate .env.local")
+			ui.NumberedList(2, "Add .env.local to .gitignore")
+		} else {
+			ui.NumberedList(1, "Run 'drift env setup' to generate Config.xcconfig")
+			ui.NumberedList(2, "Add Config.xcconfig to your Xcode project")
+		}
 	}
 
 	return nil
@@ -267,6 +287,27 @@ func detectProjectName() string {
 }
 
 func detectProjectType() string {
+	// Check for Next.js / web project (package.json with next)
+	if _, err := os.Stat("package.json"); err == nil {
+		data, err := os.ReadFile("package.json")
+		if err == nil {
+			content := string(data)
+			// Check for Next.js, React, Vue, etc.
+			if strings.Contains(content, `"next"`) {
+				return "web"
+			}
+			if strings.Contains(content, `"react"`) && !strings.Contains(content, `"react-native"`) {
+				return "web"
+			}
+			if strings.Contains(content, `"vue"`) || strings.Contains(content, `"nuxt"`) {
+				return "web"
+			}
+			if strings.Contains(content, `"svelte"`) {
+				return "web"
+			}
+		}
+	}
+
 	// Check for .xcodeproj or .xcworkspace
 	matches, _ := filepath.Glob("*.xcodeproj")
 	if len(matches) > 0 {
@@ -333,28 +374,6 @@ func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseNa
 	functionsDir := "supabase/functions"
 	migrationsDir := "supabase/migrations"
 
-	if _, err := os.Stat("supabase/functions"); os.IsNotExist(err) {
-		functionsDir = "supabase/functions"
-	}
-
-	// Detect xcconfig path
-	xcconfigPath := "Config.xcconfig"
-	if matches, _ := filepath.Glob("*.xcconfig"); len(matches) > 0 {
-		// Use existing xcconfig location as hint
-		xcconfigPath = filepath.Dir(matches[0]) + "/Config.xcconfig"
-		if xcconfigPath == "./Config.xcconfig" {
-			xcconfigPath = "Config.xcconfig"
-		}
-	}
-
-	// Detect PG bin
-	pgBin := "/opt/homebrew/opt/postgresql@16/bin"
-	if _, err := os.Stat("/opt/homebrew/opt/postgresql@16/bin/pg_dump"); os.IsNotExist(err) {
-		if _, err := os.Stat("/opt/homebrew/opt/postgresql@15/bin/pg_dump"); err == nil {
-			pgBin = "/opt/homebrew/opt/postgresql@15/bin"
-		}
-	}
-
 	// Get worktree naming pattern
 	wtPattern := fmt.Sprintf("%s-{branch}", name)
 
@@ -393,26 +412,44 @@ project:
 
 %s`, name, projectType, supabaseSection)
 
-	// Add APNs config if we have values
-	if teamID != "" || bundleID != "" {
-		config += fmt.Sprintf(`apns:
+	// Add platform-specific config
+	if projectType == "web" {
+		// Web project config
+		config += `web:
+  env_output: .env.local
+
+`
+	} else {
+		// Apple platform config
+		// Detect xcconfig path
+		xcconfigPath := "Config.xcconfig"
+		if matches, _ := filepath.Glob("*.xcconfig"); len(matches) > 0 {
+			xcconfigPath = filepath.Dir(matches[0]) + "/Config.xcconfig"
+			if xcconfigPath == "./Config.xcconfig" {
+				xcconfigPath = "Config.xcconfig"
+			}
+		}
+
+		// Add APNs config if we have values
+		if teamID != "" || bundleID != "" {
+			config += fmt.Sprintf(`apns:
   team_id: "%s"
   bundle_id: "%s"
   key_pattern: "AuthKey_*.p8"
   environment: development
 
 `, teamID, bundleID)
-	} else {
-		config += `# apns:
+		} else {
+			config += `# apns:
 #   team_id: "YOUR_TEAM_ID"
 #   bundle_id: "com.yourcompany.yourapp"
 #   key_pattern: "AuthKey_*.p8"
 #   environment: development
 
 `
-	}
+		}
 
-	config += fmt.Sprintf(`xcode:
+		config += fmt.Sprintf(`xcode:
   xcconfig_output: %s
   version_file: Version.xcconfig
   # schemes:
@@ -420,8 +457,11 @@ project:
   #   development: "App (Development)"
   #   feature: "App (Feature)"
 
-database:
-  pg_bin: %s
+`, xcconfigPath)
+	}
+
+	// Common sections
+	config += fmt.Sprintf(`database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
   direct_port: 5432
@@ -435,9 +475,9 @@ worktree:
   naming_pattern: "%s"
   copy_on_create:
     - .env
-    - "*.p8"
+    - .env.local
   auto_setup_xcconfig: true
-`, xcconfigPath, pgBin, wtPattern)
+`, wtPattern)
 
 	return config
 }
