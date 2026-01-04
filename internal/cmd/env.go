@@ -81,10 +81,10 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	ui.Header("Environment Info")
 
-	// Get Supabase branch info (with branch mapping support)
+	// Get Supabase branch info (with override support)
 	client := supabase.NewClient()
-	mappedBranch := GetMappedBranch(cfg, gitBranch)
-	info, err := client.GetBranchInfoWithMapping(gitBranch, mappedBranch)
+	overrideBranch := cfg.Supabase.OverrideBranch
+	info, err := client.GetBranchInfoWithOverride(gitBranch, overrideBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -98,9 +98,9 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 	ui.KeyValue("API URL", info.APIURL)
 
-	if info.IsMapped {
+	if info.IsOverride {
 		ui.NewLine()
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	if info.IsFallback {
@@ -151,8 +151,11 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		ui.Infof("Using branch override: %s", envBranchFlag)
 	}
 
-	// Apply branch mapping from config
-	mappedBranch := GetMappedBranch(cfg, targetBranch)
+	// Apply override from config (if no flag override)
+	overrideBranch := ""
+	if envBranchFlag == "" && cfg.Supabase.OverrideBranch != "" {
+		overrideBranch = cfg.Supabase.OverrideBranch
+	}
 
 	// Resolve Supabase branch
 	client := supabase.NewClient()
@@ -160,15 +163,15 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 	sp := ui.NewSpinner("Resolving Supabase branch")
 	sp.Start()
 
-	info, err := client.GetBranchInfoWithMapping(targetBranch, mappedBranch)
+	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
 	if err != nil {
 		sp.Fail("Failed to resolve Supabase branch")
 		return err
 	}
 	sp.Stop()
 
-	if info.IsMapped {
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(targetBranch), ui.Cyan(info.SupabaseBranch.Name))
+	if info.IsOverride {
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	if info.IsFallback {

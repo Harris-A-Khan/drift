@@ -86,9 +86,13 @@ func getDeployTarget() (*supabase.BranchInfo, error) {
 		}
 	}
 
-	// Apply branch mapping from config
-	mappedBranch := GetMappedBranch(cfg, targetBranch)
-	info, err := client.GetBranchInfoWithMapping(targetBranch, mappedBranch)
+	// Apply override from config (if no flag override)
+	overrideBranch := ""
+	if deployBranchFlag == "" && cfg.Supabase.OverrideBranch != "" {
+		overrideBranch = cfg.Supabase.OverrideBranch
+	}
+
+	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +122,8 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 
-	if info.IsMapped {
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	if info.IsOverride {
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	if info.IsFallback {
@@ -189,8 +193,8 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 
-	if info.IsMapped {
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	if info.IsOverride {
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	// Confirm for production
@@ -298,10 +302,10 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Apply branch mapping from config
-	mappedBranch := GetMappedBranch(cfg, gitBranch)
+	// Apply override from config
+	overrideBranch := cfg.Supabase.OverrideBranch
 	client := supabase.NewClient()
-	info, err := client.GetBranchInfoWithMapping(gitBranch, mappedBranch)
+	info, err := client.GetBranchInfoWithOverride(gitBranch, overrideBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -315,9 +319,9 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 
-	if info.IsMapped {
+	if info.IsOverride {
 		ui.NewLine()
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	if info.IsFallback {
@@ -363,8 +367,8 @@ func runDeployListSecrets(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 
-	if info.IsMapped {
-		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	if info.IsOverride {
+		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
 
 	if info.IsFallback {

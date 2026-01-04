@@ -31,23 +31,27 @@ type ProjectConfig struct {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRef        string            `yaml:"project_ref" mapstructure:"project_ref"`
-	ProjectName       string            `yaml:"project_name" mapstructure:"project_name"`
-	FunctionsDir      string            `yaml:"functions_dir" mapstructure:"functions_dir"`
-	MigrationsDir     string            `yaml:"migrations_dir" mapstructure:"migrations_dir"`
-	ProtectedBranches []string          `yaml:"protected_branches" mapstructure:"protected_branches"`
-	BranchMappings    map[string]string `yaml:"branch_mappings" mapstructure:"branch_mappings"`
+	ProjectRef        string   `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string   `yaml:"project_name" mapstructure:"project_name"`
+	FunctionsDir      string   `yaml:"functions_dir" mapstructure:"functions_dir"`
+	MigrationsDir     string   `yaml:"migrations_dir" mapstructure:"migrations_dir"`
+	ProtectedBranches []string `yaml:"protected_branches" mapstructure:"protected_branches"`
+	OverrideBranch    string   `yaml:"override_branch" mapstructure:"override_branch"`
 }
 
-// GetMappedBranch returns the Supabase branch for a git branch.
-// If a mapping exists, it returns the mapped branch; otherwise returns the git branch name.
-func (c *SupabaseConfig) GetMappedBranch(gitBranch string) string {
-	if c.BranchMappings != nil {
-		if mapped, ok := c.BranchMappings[gitBranch]; ok {
-			return mapped
-		}
+// GetTargetBranch returns the Supabase branch to use for a git branch.
+// Priority: override_branch > git branch name mapping
+// If override is set, always use it. Otherwise, use the git branch name directly.
+func (c *SupabaseConfig) GetTargetBranch(gitBranch string) string {
+	if c.OverrideBranch != "" {
+		return c.OverrideBranch
 	}
 	return gitBranch
+}
+
+// HasOverride returns true if an override branch is configured.
+func (c *SupabaseConfig) HasOverride() bool {
+	return c.OverrideBranch != ""
 }
 
 // APNSConfig holds Apple Push Notification configuration.

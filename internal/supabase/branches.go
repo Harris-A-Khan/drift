@@ -213,26 +213,32 @@ type BranchInfo struct {
 	ProjectRef     string
 	APIURL         string
 	IsFallback     bool
-	IsMapped       bool   // True if git branch was mapped to a different Supabase branch
-	MappedFrom     string // Original git branch if mapped
+	IsOverride     bool   // True if using override_branch from config
+	OverrideFrom   string // Original git branch if overridden
 }
 
 // GetBranchInfo resolves full branch information for a git branch.
+// Logic:
+//   - main → production Supabase branch
+//   - development → development Supabase branch
+//   - other → find matching Supabase branch, fallback to development
 func (c *Client) GetBranchInfo(gitBranch string) (*BranchInfo, error) {
-	return c.GetBranchInfoWithMapping(gitBranch, gitBranch)
+	return c.GetBranchInfoWithOverride(gitBranch, "")
 }
 
-// GetBranchInfoWithMapping resolves branch info, using targetBranch to find the Supabase branch.
-// This allows mapping a git branch to a different Supabase branch.
-func (c *Client) GetBranchInfoWithMapping(gitBranch, targetBranch string) (*BranchInfo, error) {
+// GetBranchInfoWithOverride resolves branch info, optionally using an override branch.
+// If overrideBranch is set, it takes priority over the git branch.
+func (c *Client) GetBranchInfoWithOverride(gitBranch, overrideBranch string) (*BranchInfo, error) {
 	info := &BranchInfo{
 		GitBranch: gitBranch,
 	}
 
-	// Track if we're using a mapping
-	if gitBranch != targetBranch {
-		info.IsMapped = true
-		info.MappedFrom = gitBranch
+	// Determine target branch
+	targetBranch := gitBranch
+	if overrideBranch != "" {
+		targetBranch = overrideBranch
+		info.IsOverride = true
+		info.OverrideFrom = gitBranch
 	}
 
 	// First try exact match with target branch
@@ -259,5 +265,41 @@ func (c *Client) GetBranchInfoWithMapping(gitBranch, targetBranch string) (*Bran
 	info.APIURL = c.GetBranchURL(branch.ProjectRef)
 
 	return info, nil
+}
+
+// FindSimilarBranches returns Supabase branches with names similar to the query.
+// Uses simple substring matching for now.
+func (c *Client) FindSimilarBranches(query string) ([]Branch, error) {
+	branches, err := c.GetBranches()
+	if err != nil {
+		return nil, err
+	}
+
+	var similar []Branch
+	queryLower := strings.ToLower(query)
+
+	for _, b := range branches {
+		nameLower := strings.ToLower(b.Name)
+		gitBranchLower := strings.ToLower(b.GitBranch)
+
+		// Check if query is a substring of branch name or git branch
+		if strings.Contains(nameLower, queryLower) || strings.Contains(gitBranchLower, queryLower) {
+			similar = append(similar, b)
+			continue
+		}
+
+		// Check if branch name/git branch contains parts of the query (split by / or -)
+		queryParts := strings.FieldsFunc(queryLower, func(r rune) bool {
+			return r == '/' || r == '-' || r == '_'
+		})
+		for _, part := range queryParts {
+			if len(part) > 2 && (strings.Contains(nameLower, part) || strings.Contains(gitBranchLower, part)) {
+				similar = append(similar, b)
+				break
+			}
+		}
+	}
+
+	return similar, nil
 }
 
