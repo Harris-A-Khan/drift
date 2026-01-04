@@ -68,6 +68,60 @@ func (c *Client) GetBranch(name string) (*Branch, error) {
 	return nil, fmt.Errorf("branch '%s' not found", name)
 }
 
+// BranchSecrets contains all secrets for a Supabase branch.
+// Available for non-production branches via `supabase branches get`.
+type BranchSecrets struct {
+	PostgresURL           string `json:"POSTGRES_URL"`
+	PostgresURLNonPooling string `json:"POSTGRES_URL_NON_POOLING"`
+	SupabaseAnonKey       string `json:"SUPABASE_ANON_KEY"`
+	SupabaseJWTSecret     string `json:"SUPABASE_JWT_SECRET"`
+	SupabaseServiceRoleKey string `json:"SUPABASE_SERVICE_ROLE_KEY"`
+	SupabaseURL           string `json:"SUPABASE_URL"`
+}
+
+// GetBranchSecrets retrieves all secrets for a non-production branch.
+// This only works for preview/development branches, not production.
+func (c *Client) GetBranchSecrets(branchName string) (*BranchSecrets, error) {
+	result, err := shell.Run("supabase", "branches", "get", branchName, "--output", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch secrets: %w - %s", err, result.Stderr)
+	}
+
+	var secrets BranchSecrets
+	if err := json.Unmarshal([]byte(result.Stdout), &secrets); err != nil {
+		return nil, fmt.Errorf("failed to parse branch secrets: %w", err)
+	}
+
+	return &secrets, nil
+}
+
+// ExtractPasswordFromURL extracts the password from a PostgreSQL connection URL.
+// URL format: postgresql://user:password@host:port/database
+func ExtractPasswordFromURL(url string) string {
+	// Find the password between : and @
+	// postgresql://postgres.ref:PASSWORD@host:port/database
+	colonIdx := strings.Index(url, "://")
+	if colonIdx == -1 {
+		return ""
+	}
+	rest := url[colonIdx+3:] // Skip "://"
+
+	// Find the @ symbol
+	atIdx := strings.Index(rest, "@")
+	if atIdx == -1 {
+		return ""
+	}
+	userPass := rest[:atIdx]
+
+	// Find the colon in user:pass
+	colonIdx = strings.Index(userPass, ":")
+	if colonIdx == -1 {
+		return ""
+	}
+
+	return userPass[colonIdx+1:]
+}
+
 // ResolveBranch finds the Supabase branch for a git branch and returns the environment type.
 func (c *Client) ResolveBranch(gitBranch string) (*Branch, Environment, error) {
 	branches, err := c.GetBranches()
@@ -211,6 +265,7 @@ type BranchInfo struct {
 	SupabaseBranch *Branch
 	Environment    Environment
 	ProjectRef     string
+	Region         string // AWS region (e.g., us-east-1)
 	APIURL         string
 	IsFallback     bool
 	IsOverride     bool   // True if using override_branch from config
@@ -263,6 +318,11 @@ func (c *Client) GetBranchInfoWithOverride(gitBranch, overrideBranch string) (*B
 	info.Environment = env
 	info.ProjectRef = branch.ProjectRef
 	info.APIURL = c.GetBranchURL(branch.ProjectRef)
+
+	// Get region from project info
+	if project, err := c.FindProjectByRef(branch.ProjectRef); err == nil && project != nil {
+		info.Region = project.Region
+	}
 
 	return info, nil
 }

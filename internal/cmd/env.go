@@ -208,14 +208,57 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		ui.Warningf("No Supabase branch for '%s', using fallback to development", targetBranch)
 	}
 
-	// Fetch anon key
+	// Fetch API keys and secrets
 	sp = ui.NewSpinner("Fetching API keys")
 	sp.Start()
 
-	anonKey, err := client.GetAnonKey(info.ProjectRef)
-	if err != nil {
-		sp.Fail("Failed to fetch API keys")
-		return fmt.Errorf("failed to get anon key: %w", err)
+	var anonKey, serviceRoleKey string
+	var webSecrets *web.BranchSecretsInput
+
+	// For non-production branches, we can get all secrets via branches get
+	if info.Environment != supabase.EnvProduction {
+		secrets, err := client.GetBranchSecrets(info.SupabaseBranch.Name)
+		if err == nil {
+			anonKey = secrets.SupabaseAnonKey
+			serviceRoleKey = secrets.SupabaseServiceRoleKey
+			if cfg.Project.IsWebPlatform() {
+				webSecrets = &web.BranchSecretsInput{
+					AnonKey:           secrets.SupabaseAnonKey,
+					ServiceRoleKey:    secrets.SupabaseServiceRoleKey,
+					DatabasePassword:  supabase.ExtractPasswordFromURL(secrets.PostgresURLNonPooling),
+					DirectDatabaseURL: secrets.PostgresURLNonPooling,
+					PoolerDatabaseURL: secrets.PostgresURL,
+				}
+			}
+		} else {
+			// Fallback to API keys method
+			anonKey, err = client.GetAnonKey(info.ProjectRef)
+			if err != nil {
+				sp.Fail("Failed to fetch API keys")
+				return fmt.Errorf("failed to get anon key: %w", err)
+			}
+			if cfg.Project.IsWebPlatform() {
+				serviceRoleKey, _ = client.GetServiceKey(info.ProjectRef)
+				webSecrets = &web.BranchSecretsInput{
+					AnonKey:        anonKey,
+					ServiceRoleKey: serviceRoleKey,
+				}
+			}
+		}
+	} else {
+		// Production - use API keys method
+		anonKey, err = client.GetAnonKey(info.ProjectRef)
+		if err != nil {
+			sp.Fail("Failed to fetch API keys")
+			return fmt.Errorf("failed to get anon key: %w", err)
+		}
+		if cfg.Project.IsWebPlatform() {
+			serviceRoleKey, _ = client.GetServiceKey(info.ProjectRef)
+			webSecrets = &web.BranchSecretsInput{
+				AnonKey:        anonKey,
+				ServiceRoleKey: serviceRoleKey,
+			}
+		}
 	}
 	sp.Stop()
 
@@ -229,7 +272,7 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		outputPath = cfg.GetEnvLocalPath()
 		generator := web.NewEnvLocalGenerator(outputPath)
 
-		if err := generator.GenerateFromBranchInfo(info, anonKey); err != nil {
+		if err := generator.GenerateFromBranchInfo(info, webSecrets); err != nil {
 			sp.Fail("Failed to generate .env.local")
 			return err
 		}

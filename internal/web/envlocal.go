@@ -26,15 +26,102 @@ func NewEnvLocalGenerator(outputPath string) *EnvLocalGenerator {
 
 // EnvLocalData holds the data for .env.local generation.
 type EnvLocalData struct {
-	GitBranch      string
-	Environment    string
-	SupabaseBranch string
-	ProjectRef     string
-	APIURL         string
-	AnonKey        string
-	IsFallback     bool
-	IsOverride     bool
-	GeneratedAt    time.Time
+	GitBranch        string
+	Environment      string
+	SupabaseBranch   string
+	ProjectRef       string
+	Region           string
+	APIURL           string
+	AnonKey          string
+	ServiceRoleKey   string
+	DatabasePassword string // Optional - from branch secrets or SUPABASE_DB_PASSWORD env var
+
+	// Pre-computed database URLs from branch secrets (if available)
+	// These take precedence over computed URLs when set
+	DirectDatabaseURL string // From POSTGRES_URL_NON_POOLING in branch secrets
+	PoolerDatabaseURL string // From POSTGRES_URL in branch secrets
+
+	IsFallback  bool
+	IsOverride  bool
+	GeneratedAt time.Time
+}
+
+// DatabaseHost returns the direct database host.
+func (d EnvLocalData) DatabaseHost() string {
+	return fmt.Sprintf("db.%s.supabase.co", d.ProjectRef)
+}
+
+// PoolerHost returns the connection pooler host.
+func (d EnvLocalData) PoolerHost() string {
+	region := d.Region
+	if region == "" {
+		region = "us-east-1"
+	}
+	return fmt.Sprintf("aws-0-%s.pooler.supabase.com", region)
+}
+
+// DatabaseURL returns the direct database connection URL.
+// Uses pre-computed URL from branch secrets if available, otherwise constructs it.
+func (d EnvLocalData) DatabaseURL() string {
+	// Use pre-computed URL if available
+	if d.DirectDatabaseURL != "" {
+		return d.DirectDatabaseURL
+	}
+	// Fall back to constructed URL
+	password := d.DatabasePassword
+	if password == "" {
+		password = "[YOUR-PASSWORD]"
+	}
+	return fmt.Sprintf("postgresql://postgres:%s@%s:5432/postgres", password, d.DatabaseHost())
+}
+
+// PoolerURL returns the pooler connection URL (transaction mode, port 6543).
+// Uses pre-computed URL from branch secrets if available, otherwise constructs it.
+func (d EnvLocalData) PoolerURL() string {
+	// Use pre-computed URL if available
+	if d.PoolerDatabaseURL != "" {
+		return d.PoolerDatabaseURL
+	}
+	// Fall back to constructed URL
+	password := d.DatabasePassword
+	if password == "" {
+		password = "[YOUR-PASSWORD]"
+	}
+	return fmt.Sprintf("postgresql://postgres.%s:%s@%s:6543/postgres", d.ProjectRef, password, d.PoolerHost())
+}
+
+// PoolerSessionURL returns the pooler connection URL (session mode, port 5432).
+// Derives the host from the pooler URL if available, otherwise constructs it.
+func (d EnvLocalData) PoolerSessionURL() string {
+	// If we have a pooler URL, extract the host and change port to 5432
+	if d.PoolerDatabaseURL != "" {
+		// Parse host from postgresql://user:pass@host:port/db
+		url := d.PoolerDatabaseURL
+		atIdx := strings.Index(url, "@")
+		if atIdx != -1 {
+			rest := url[atIdx+1:]
+			colonIdx := strings.Index(rest, ":")
+			if colonIdx != -1 {
+				host := rest[:colonIdx]
+				password := d.DatabasePassword
+				if password == "" {
+					password = "[YOUR-PASSWORD]"
+				}
+				return fmt.Sprintf("postgresql://postgres.%s:%s@%s:5432/postgres", d.ProjectRef, password, host)
+			}
+		}
+	}
+	// Fall back to constructed URL
+	password := d.DatabasePassword
+	if password == "" {
+		password = "[YOUR-PASSWORD]"
+	}
+	return fmt.Sprintf("postgresql://postgres.%s:%s@%s:5432/postgres", d.ProjectRef, password, d.PoolerHost())
+}
+
+// HasDatabasePassword returns true if the database password is available.
+func (d EnvLocalData) HasDatabasePassword() bool {
+	return d.DatabasePassword != ""
 }
 
 // SupabaseBranchDisplay returns the branch name with fallback/override suffix.
@@ -55,6 +142,7 @@ const envLocalTemplate = `# .env.local - SECRETS FILE (gitignored)
 # Git Branch: {{.GitBranch}}
 # Supabase Branch: {{.SupabaseBranch}}
 # Project Ref: {{.ProjectRef}}
+# Region: {{.Region}}
 # Using Fallback: {{.IsFallback}}
 # Using Override: {{.IsOverride}}
 # Generated: {{.GeneratedAt.Format "Mon Jan  2 15:04:05 MST 2006"}}
@@ -62,20 +150,46 @@ const envLocalTemplate = `# .env.local - SECRETS FILE (gitignored)
 # DO NOT COMMIT THIS FILE
 # Get values from: https://app.supabase.com/project/{{.ProjectRef}}/settings/api
 
+# =============================================================================
+# PUBLIC VARIABLES (safe for client-side)
+# =============================================================================
+
 # Supabase project URL ({{.SupabaseBranchDisplay}} branch)
 NEXT_PUBLIC_SUPABASE_URL={{.APIURL}}
 
 # Supabase anon key (Project Settings > API > anon public)
 NEXT_PUBLIC_SUPABASE_ANON_KEY={{.AnonKey}}
 
-# Supabase service role key (Project Settings > API > service_role)
-# IMPORTANT: Keep this secret! Never expose in client-side code.
-# SUPABASE_SERVICE_ROLE_KEY=
-
 # Branch info for environment display
 NEXT_PUBLIC_GIT_BRANCH={{.GitBranch}}
 NEXT_PUBLIC_SUPABASE_BRANCH={{.SupabaseBranchDisplay}}
 NEXT_PUBLIC_DRIFT_ENVIRONMENT={{.Environment}}
+
+# =============================================================================
+# SECRET VARIABLES (server-side only - DO NOT prefix with NEXT_PUBLIC_)
+# =============================================================================
+
+# Supabase service role key - KEEP SECRET!
+# Has full access to your database, bypassing RLS
+SUPABASE_SERVICE_ROLE_KEY={{.ServiceRoleKey}}
+
+# =============================================================================
+# DATABASE CONNECTION STRINGS
+{{if .HasDatabasePassword}}# Password from SUPABASE_DB_PASSWORD environment variable
+{{else}}# Password not available. Set SUPABASE_DB_PASSWORD env var before running 'drift env setup'
+# Or get your password from: https://supabase.com/dashboard/project/{{.ProjectRef}}/settings/database
+{{end}}# =============================================================================
+
+# Direct database connection (for migrations, admin tasks)
+DATABASE_URL={{.DatabaseURL}}
+
+# Connection pooler - Transaction mode (port 6543)
+# Best for serverless functions, short-lived connections
+DATABASE_URL_POOLER={{.PoolerURL}}
+
+# Connection pooler - Session mode (port 5432)
+# Best for long-lived connections, prepared statements
+DATABASE_URL_POOLER_SESSION={{.PoolerSessionURL}}
 `
 
 // Generate generates the .env.local file.
@@ -106,18 +220,48 @@ func (g *EnvLocalGenerator) Generate(data EnvLocalData) error {
 	return nil
 }
 
+// BranchSecretsInput holds optional secrets retrieved from branch get command.
+type BranchSecretsInput struct {
+	AnonKey           string
+	ServiceRoleKey    string
+	DatabasePassword  string
+	DirectDatabaseURL string // POSTGRES_URL_NON_POOLING
+	PoolerDatabaseURL string // POSTGRES_URL
+}
+
 // GenerateFromBranchInfo generates .env.local from Supabase branch info.
-func (g *EnvLocalGenerator) GenerateFromBranchInfo(info *supabase.BranchInfo, anonKey string) error {
+// If secrets is nil, it falls back to SUPABASE_DB_PASSWORD environment variable for password.
+func (g *EnvLocalGenerator) GenerateFromBranchInfo(info *supabase.BranchInfo, secrets *BranchSecretsInput) error {
+	var anonKey, serviceRoleKey, dbPassword, directURL, poolerURL string
+
+	if secrets != nil {
+		anonKey = secrets.AnonKey
+		serviceRoleKey = secrets.ServiceRoleKey
+		dbPassword = secrets.DatabasePassword
+		directURL = secrets.DirectDatabaseURL
+		poolerURL = secrets.PoolerDatabaseURL
+	}
+
+	// Fall back to environment variable for password
+	if dbPassword == "" {
+		dbPassword = os.Getenv("SUPABASE_DB_PASSWORD")
+	}
+
 	data := EnvLocalData{
-		GitBranch:      info.GitBranch,
-		Environment:    string(info.Environment),
-		SupabaseBranch: info.SupabaseBranch.Name,
-		ProjectRef:     info.ProjectRef,
-		APIURL:         info.APIURL,
-		AnonKey:        anonKey,
-		IsFallback:     info.IsFallback,
-		IsOverride:     info.IsOverride,
-		GeneratedAt:    time.Now(),
+		GitBranch:         info.GitBranch,
+		Environment:       string(info.Environment),
+		SupabaseBranch:    info.SupabaseBranch.Name,
+		ProjectRef:        info.ProjectRef,
+		Region:            info.Region,
+		APIURL:            info.APIURL,
+		AnonKey:           anonKey,
+		ServiceRoleKey:    serviceRoleKey,
+		DatabasePassword:  dbPassword,
+		DirectDatabaseURL: directURL,
+		PoolerDatabaseURL: poolerURL,
+		IsFallback:        info.IsFallback,
+		IsOverride:        info.IsOverride,
+		GeneratedAt:       time.Now(),
 	}
 
 	return g.Generate(data)
