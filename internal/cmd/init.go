@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
-	"github.com/undrift/drift/internal/git"
 	"github.com/undrift/drift/internal/ui"
 	"github.com/undrift/drift/pkg/shell"
 )
@@ -280,19 +279,5 @@ worktree:
 `, xcconfigPath, pgBin, wtPattern)
 
 	return config
-}
-
-// initIfNeeded checks if initialization is needed and suggests running init.
-func initIfNeeded() bool {
-	if !config.Exists() {
-		if !git.IsGitRepository() {
-			ui.Error("Not in a git repository")
-			return false
-		}
-		ui.Info("No .drift.yaml found")
-		ui.Infof("Run 'drift init' to create one")
-		return false
-	}
-	return true
 }
 

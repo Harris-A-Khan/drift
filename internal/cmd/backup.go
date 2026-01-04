@@ -85,9 +85,10 @@ func runBackupUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Normalize environment name
-	if env == "production" {
+	switch env {
+	case "production":
 		env = "prod"
-	} else if env == "development" {
+	case "development":
 		env = "dev"
 	}
 
@@ -137,9 +138,10 @@ func runBackupDownload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Normalize environment name
-	if env == "production" {
+	switch env {
+	case "production":
 		env = "prod"
-	} else if env == "development" {
+	case "development":
 		env = "dev"
 	}
 
@@ -189,9 +191,10 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Normalize environment name
-	if env == "production" {
+	switch env {
+	case "production":
 		env = "prod"
-	} else if env == "development" {
+	case "development":
 		env = "dev"
 	}
 
@@ -239,9 +242,10 @@ func runBackupDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	// Normalize environment name
-	if env == "production" {
+	switch env {
+	case "production":
 		env = "prod"
-	} else if env == "development" {
+	case "development":
 		env = "dev"
 	}
 
