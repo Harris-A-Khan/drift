@@ -56,12 +56,12 @@ func TestGenerate(t *testing.T) {
 
 	contentStr := string(content)
 	expectedStrings := []string{
-		"SUPABASE_URL = https://abcdefghij.supabase.co",
+		"SUPABASE_URL = https:/$()/abcdefghij.supabase.co", // URL escaped for Xcode
 		"SUPABASE_ANON_KEY = test-anon-key-123",
-		"SUPABASE_PROJECT_REF = abcdefghij",
 		"DRIFT_ENVIRONMENT = Feature",
-		"DRIFT_GIT_BRANCH = feature/test",
-		"DRIFT_SUPABASE_BRANCH = feature-test",
+		"GIT_BRANCH_NAME = feature/test",
+		"SUPABASE_BRANCH_NAME = feature-test",
+		"// Project Ref: abcdefghij", // Project ref is in comments now
 	}
 
 	for _, expected := range expectedStrings {
@@ -97,8 +97,12 @@ func TestGenerateWithFallback(t *testing.T) {
 		t.Errorf("failed to read generated file: %v", err)
 	}
 
-	if !containsString(string(content), "Using fallback") {
+	contentStr := string(content)
+	if !containsString(contentStr, "// Using Fallback: true") {
 		t.Error("expected fallback note in generated config")
+	}
+	if !containsString(contentStr, "SUPABASE_BRANCH_NAME = development (fallback)") {
+		t.Error("expected fallback suffix in branch name")
 	}
 }
 
@@ -198,7 +202,23 @@ func TestGetCurrentEnvironment(t *testing.T) {
 		t.Errorf("expected 'Production', got '%s'", env)
 	}
 
-	// Test 2: File without DRIFT_ENVIRONMENT
+	// Test 2: File with Environment in comment header (fallback)
+	content = `// Config.xcconfig
+// Environment: Development
+SUPABASE_URL = https://example.supabase.co`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	env, err = GetCurrentEnvironment(configPath)
+	if err != nil {
+		t.Errorf("GetCurrentEnvironment should read from comment header: %v", err)
+	}
+	if env != "Development" {
+		t.Errorf("expected 'Development' from comment header, got '%s'", env)
+	}
+
+	// Test 3: File without any environment info
 	content = `SUPABASE_URL = https://example.supabase.co`
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
@@ -206,7 +226,7 @@ func TestGetCurrentEnvironment(t *testing.T) {
 
 	_, err = GetCurrentEnvironment(configPath)
 	if err == nil {
-		t.Error("expected error when DRIFT_ENVIRONMENT is missing")
+		t.Error("expected error when environment is missing everywhere")
 	}
 }
 
