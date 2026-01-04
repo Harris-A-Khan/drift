@@ -63,6 +63,9 @@ func init() {
 }
 
 func runEnvShow(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Get current git branch
@@ -120,6 +123,9 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvSetup(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Get current git branch

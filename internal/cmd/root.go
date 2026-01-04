@@ -6,6 +6,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/undrift/drift/internal/config"
+	"github.com/undrift/drift/internal/git"
+	"github.com/undrift/drift/internal/ui"
 )
 
 var (
@@ -90,5 +93,21 @@ func AddCommand(cmd *cobra.Command) {
 // PrintVersion prints the version information.
 func PrintVersion() {
 	fmt.Printf("drift version %s\n", version)
+}
+
+// RequireInit checks if drift is properly initialized.
+// Returns true if ready to proceed, false if not.
+// Use this at the start of commands that require git + config.
+func RequireInit() bool {
+	if !git.IsGitRepository() {
+		ui.Error("Not in a git repository")
+		return false
+	}
+	if !config.Exists() {
+		ui.Warning("No .drift.yaml found")
+		ui.Info("Run 'drift init' to create one")
+		return false
+	}
+	return true
 }
 

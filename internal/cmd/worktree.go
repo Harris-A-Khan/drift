@@ -123,6 +123,9 @@ func init() {
 }
 
 func runWorktreeList(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	worktrees, err := git.ListWorktrees()
 	if err != nil {
 		return err
@@ -178,6 +181,9 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 }
 
 func runWorktreeCreate(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	branch := args[0]
 	cfg := config.LoadOrDefault()
 

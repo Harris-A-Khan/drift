@@ -54,6 +54,9 @@ func init() {
 }
 
 func runBuildBump(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 	versionFile := cfg.GetVersionFilePath()
 
@@ -77,6 +80,9 @@ func runBuildBump(cmd *cobra.Command, args []string) error {
 }
 
 func runBuildSet(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 	versionFile := cfg.GetVersionFilePath()
 
@@ -102,6 +108,9 @@ func runBuildSet(cmd *cobra.Command, args []string) error {
 }
 
 func runBuildVersion(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 	versionFile := cfg.GetVersionFilePath()
 
@@ -125,6 +134,9 @@ func runBuildVersion(cmd *cobra.Command, args []string) error {
 }
 
 func runBuildSetVersion(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 	versionFile := cfg.GetVersionFilePath()
 	version := args[0]

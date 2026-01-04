@@ -85,6 +85,9 @@ func getDeployTarget() (*supabase.BranchInfo, error) {
 }
 
 func runDeployFunctions(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Get target environment
@@ -149,6 +152,9 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 }
 
 func runDeploySecrets(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Get target environment
@@ -261,6 +267,9 @@ func runDeployAll(cmd *cobra.Command, args []string) error {
 }
 
 func runDeployStatus(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Get current git branch

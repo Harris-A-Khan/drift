@@ -59,6 +59,9 @@ func init() {
 }
 
 func runMigratePush(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	cfg := config.LoadOrDefault()
 
 	// Determine target branch
@@ -150,6 +153,9 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrateStatus(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	ui.Header("Migration Status")
 
 	// Get current git branch

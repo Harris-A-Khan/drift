@@ -113,6 +113,9 @@ func getProjectRef(env string) string {
 }
 
 func runDbDump(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	env := args[0]
 	cfg := config.LoadOrDefault()
 
@@ -219,6 +222,9 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 }
 
 func runDbPush(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	target := args[0]
 	cfg := config.LoadOrDefault()
 

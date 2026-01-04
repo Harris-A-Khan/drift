@@ -75,6 +75,9 @@ func init() {
 }
 
 func runBackupUpload(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	localFile := args[0]
 	env := args[1]
 	cfg := config.LoadOrDefault()
@@ -129,6 +132,9 @@ func runBackupUpload(cmd *cobra.Command, args []string) error {
 }
 
 func runBackupDownload(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	env := args[0]
 	cfg := config.LoadOrDefault()
 
@@ -182,6 +188,9 @@ func runBackupDownload(cmd *cobra.Command, args []string) error {
 }
 
 func runBackupList(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	env := args[0]
 	cfg := config.LoadOrDefault()
 
@@ -232,6 +241,9 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 }
 
 func runBackupDelete(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
 	env := args[0]
 	filename := args[1]
 	cfg := config.LoadOrDefault()
