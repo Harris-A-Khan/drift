@@ -111,3 +111,9 @@ func RequireInit() bool {
 	return true
 }
 
+// GetMappedBranch returns the Supabase branch name for a git branch,
+// applying any configured branch mappings.
+func GetMappedBranch(cfg *config.Config, gitBranch string) string {
+	return cfg.Supabase.GetMappedBranch(gitBranch)
+}
+

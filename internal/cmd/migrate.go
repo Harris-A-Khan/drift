@@ -83,13 +83,16 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 
 	ui.Header("Push Migrations")
 
+	// Apply branch mapping from config
+	mappedBranch := GetMappedBranch(cfg, targetBranch)
+
 	// Resolve Supabase branch
 	client := supabase.NewClient()
 
 	sp := ui.NewSpinner("Resolving Supabase branch")
 	sp.Start()
 
-	info, err := client.GetBranchInfo(targetBranch)
+	info, err := client.GetBranchInfoWithMapping(targetBranch, mappedBranch)
 	if err != nil {
 		sp.Fail("Failed to resolve branch")
 		return err
@@ -100,6 +103,10 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsMapped {
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.Warning("Using fallback branch")
@@ -156,6 +163,7 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	if !RequireInit() {
 		return nil
 	}
+	cfg := config.LoadOrDefault()
 	ui.Header("Migration Status")
 
 	// Get current git branch
@@ -164,14 +172,19 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Apply branch mapping from config
+	mappedBranch := GetMappedBranch(cfg, gitBranch)
 	client := supabase.NewClient()
-	info, err := client.GetBranchInfo(gitBranch)
+	info, err := client.GetBranchInfoWithMapping(gitBranch, mappedBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 	} else {
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
 		ui.KeyValue("Environment", envColorString(string(info.Environment)))
 		ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
+		if info.IsMapped {
+			ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+		}
 	}
 
 	ui.NewLine()

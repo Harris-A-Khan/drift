@@ -31,11 +31,23 @@ type ProjectConfig struct {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRef        string   `yaml:"project_ref" mapstructure:"project_ref"`
-	ProjectName       string   `yaml:"project_name" mapstructure:"project_name"`
-	FunctionsDir      string   `yaml:"functions_dir" mapstructure:"functions_dir"`
-	MigrationsDir     string   `yaml:"migrations_dir" mapstructure:"migrations_dir"`
-	ProtectedBranches []string `yaml:"protected_branches" mapstructure:"protected_branches"`
+	ProjectRef        string            `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string            `yaml:"project_name" mapstructure:"project_name"`
+	FunctionsDir      string            `yaml:"functions_dir" mapstructure:"functions_dir"`
+	MigrationsDir     string            `yaml:"migrations_dir" mapstructure:"migrations_dir"`
+	ProtectedBranches []string          `yaml:"protected_branches" mapstructure:"protected_branches"`
+	BranchMappings    map[string]string `yaml:"branch_mappings" mapstructure:"branch_mappings"`
+}
+
+// GetMappedBranch returns the Supabase branch for a git branch.
+// If a mapping exists, it returns the mapped branch; otherwise returns the git branch name.
+func (c *SupabaseConfig) GetMappedBranch(gitBranch string) string {
+	if c.BranchMappings != nil {
+		if mapped, ok := c.BranchMappings[gitBranch]; ok {
+			return mapped
+		}
+	}
+	return gitBranch
 }
 
 // APNSConfig holds Apple Push Notification configuration.

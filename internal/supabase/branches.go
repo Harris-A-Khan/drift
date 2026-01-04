@@ -213,16 +213,30 @@ type BranchInfo struct {
 	ProjectRef     string
 	APIURL         string
 	IsFallback     bool
+	IsMapped       bool   // True if git branch was mapped to a different Supabase branch
+	MappedFrom     string // Original git branch if mapped
 }
 
 // GetBranchInfo resolves full branch information for a git branch.
 func (c *Client) GetBranchInfo(gitBranch string) (*BranchInfo, error) {
+	return c.GetBranchInfoWithMapping(gitBranch, gitBranch)
+}
+
+// GetBranchInfoWithMapping resolves branch info, using targetBranch to find the Supabase branch.
+// This allows mapping a git branch to a different Supabase branch.
+func (c *Client) GetBranchInfoWithMapping(gitBranch, targetBranch string) (*BranchInfo, error) {
 	info := &BranchInfo{
 		GitBranch: gitBranch,
 	}
 
-	// First try exact match
-	branch, env, err := c.ResolveBranch(gitBranch)
+	// Track if we're using a mapping
+	if gitBranch != targetBranch {
+		info.IsMapped = true
+		info.MappedFrom = gitBranch
+	}
+
+	// First try exact match with target branch
+	branch, env, err := c.ResolveBranch(targetBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +248,7 @@ func (c *Client) GetBranchInfo(gitBranch string) (*BranchInfo, error) {
 			return nil, err
 		}
 		if branch == nil {
-			return nil, fmt.Errorf("no Supabase branch found for '%s'", gitBranch)
+			return nil, fmt.Errorf("no Supabase branch found for '%s'", targetBranch)
 		}
 		info.IsFallback = true
 	}

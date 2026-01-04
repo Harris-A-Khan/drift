@@ -22,6 +22,8 @@ supabase:
   project_name: my-project              # Supabase project display name
   functions_dir: supabase/functions     # Path to edge functions
   migrations_dir: supabase/migrations   # Path to migrations
+  branch_mappings:                      # Map git branches to different Supabase branches
+    v2/migration-refinements: v2/migration
 
 # Xcode configuration
 xcode:
@@ -78,6 +80,11 @@ supabase:
   project_name: my-project
   functions_dir: supabase/functions
   migrations_dir: supabase/migrations
+  protected_branches:
+    - main
+    - master
+  branch_mappings:
+    v2/migration-refinements: v2/migration
 ```
 
 | Field | Description | Default |
@@ -86,8 +93,34 @@ supabase:
 | `project_name` | Supabase project display name | Set by `drift init` |
 | `functions_dir` | Path to Edge Functions | `supabase/functions` |
 | `migrations_dir` | Path to migrations | `supabase/migrations` |
+| `protected_branches` | Branches requiring confirmation | `["main", "master"]` |
+| `branch_mappings` | Map git branches to Supabase branches | `{}` |
 
 The `project_ref` replaces the need for a separate `.supabase-project-ref` file.
+
+#### Branch Mappings
+
+The `branch_mappings` field allows you to map a git branch to use a different Supabase branch's credentials. This is useful when:
+
+- You have a feature branch that should use an existing Supabase branch
+- You're iterating on migrations in a child branch but want to use the parent Supabase branch
+- You want multiple git branches to share one Supabase environment
+
+Example:
+```yaml
+supabase:
+  branch_mappings:
+    # Git branch "v2/migration-refinements" will use Supabase branch "v2/migration"
+    v2/migration-refinements: v2/migration
+    # Multiple feature branches can share one Supabase branch
+    feature/auth-v2: development
+    feature/auth-v3: development
+```
+
+When a mapping is active, drift will display:
+```
+Branch mapping: v2/migration-refinements → v2/migration
+```
 
 ### xcode
 
@@ -109,15 +142,9 @@ xcode:
 
 ### git
 
-```yaml
-git:
-  protected_branches:
-    - main
-    - master
-    - production
-```
+> **Note:** Protected branches are now configured under `supabase.protected_branches`.
 
-Protected branches require confirmation for destructive operations.
+Protected branches require confirmation for destructive operations like `drift migrate push`.
 
 ### apns
 

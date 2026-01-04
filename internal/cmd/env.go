@@ -81,9 +81,10 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	ui.Header("Environment Info")
 
-	// Get Supabase branch info
+	// Get Supabase branch info (with branch mapping support)
 	client := supabase.NewClient()
-	info, err := client.GetBranchInfo(gitBranch)
+	mappedBranch := GetMappedBranch(cfg, gitBranch)
+	info, err := client.GetBranchInfoWithMapping(gitBranch, mappedBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -96,6 +97,11 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
 	ui.KeyValue("API URL", info.APIURL)
+
+	if info.IsMapped {
+		ui.NewLine()
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.NewLine()
@@ -145,18 +151,25 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		ui.Infof("Using branch override: %s", envBranchFlag)
 	}
 
+	// Apply branch mapping from config
+	mappedBranch := GetMappedBranch(cfg, targetBranch)
+
 	// Resolve Supabase branch
 	client := supabase.NewClient()
 
 	sp := ui.NewSpinner("Resolving Supabase branch")
 	sp.Start()
 
-	info, err := client.GetBranchInfo(targetBranch)
+	info, err := client.GetBranchInfoWithMapping(targetBranch, mappedBranch)
 	if err != nil {
 		sp.Fail("Failed to resolve Supabase branch")
 		return err
 	}
 	sp.Stop()
+
+	if info.IsMapped {
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(targetBranch), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.Warningf("No Supabase branch for '%s', using fallback to development", targetBranch)

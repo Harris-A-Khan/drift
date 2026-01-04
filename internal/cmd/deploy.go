@@ -74,6 +74,7 @@ func init() {
 }
 
 func getDeployTarget() (*supabase.BranchInfo, error) {
+	cfg := config.LoadOrDefault()
 	client := supabase.NewClient()
 
 	targetBranch := deployBranchFlag
@@ -85,7 +86,9 @@ func getDeployTarget() (*supabase.BranchInfo, error) {
 		}
 	}
 
-	info, err := client.GetBranchInfo(targetBranch)
+	// Apply branch mapping from config
+	mappedBranch := GetMappedBranch(cfg, targetBranch)
+	info, err := client.GetBranchInfoWithMapping(targetBranch, mappedBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +117,10 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsMapped {
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.Warning("Using fallback environment")
@@ -181,6 +188,10 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsMapped {
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	// Confirm for production
 	if info.Environment == supabase.EnvProduction && !IsYes() {
@@ -287,8 +298,10 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Apply branch mapping from config
+	mappedBranch := GetMappedBranch(cfg, gitBranch)
 	client := supabase.NewClient()
-	info, err := client.GetBranchInfo(gitBranch)
+	info, err := client.GetBranchInfoWithMapping(gitBranch, mappedBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -301,6 +314,11 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsMapped {
+		ui.NewLine()
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.NewLine()
@@ -344,6 +362,10 @@ func runDeployListSecrets(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	if info.IsMapped {
+		ui.Infof("Branch mapping: %s → %s", ui.Cyan(info.MappedFrom), ui.Cyan(info.SupabaseBranch.Name))
+	}
 
 	if info.IsFallback {
 		ui.Warning("Using fallback environment")
