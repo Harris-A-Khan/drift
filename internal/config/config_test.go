@@ -15,8 +15,8 @@ func TestDefaultConfig_HasExpectedValues(t *testing.T) {
 	}
 
 	// Supabase defaults
-	if cfg.Supabase.ProjectRefFile != ".supabase-project-ref" {
-		t.Errorf("DefaultConfig().Supabase.ProjectRefFile = %q, want %q", cfg.Supabase.ProjectRefFile, ".supabase-project-ref")
+	if cfg.Supabase.ProjectRef != "" {
+		t.Errorf("DefaultConfig().Supabase.ProjectRef = %q, want empty", cfg.Supabase.ProjectRef)
 	}
 	if cfg.Supabase.FunctionsDir != "supabase/functions" {
 		t.Errorf("DefaultConfig().Supabase.FunctionsDir = %q, want %q", cfg.Supabase.FunctionsDir, "supabase/functions")

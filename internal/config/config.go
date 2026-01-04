@@ -31,7 +31,8 @@ type ProjectConfig struct {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRefFile    string   `yaml:"project_ref_file" mapstructure:"project_ref_file"`
+	ProjectRef        string   `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string   `yaml:"project_name" mapstructure:"project_name"`
 	FunctionsDir      string   `yaml:"functions_dir" mapstructure:"functions_dir"`
 	MigrationsDir     string   `yaml:"migrations_dir" mapstructure:"migrations_dir"`
 	ProtectedBranches []string `yaml:"protected_branches" mapstructure:"protected_branches"`

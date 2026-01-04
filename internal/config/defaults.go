@@ -8,7 +8,8 @@ func DefaultConfig() *Config {
 			Type: "ios",
 		},
 		Supabase: SupabaseConfig{
-			ProjectRefFile:    ".supabase-project-ref",
+			ProjectRef:        "",
+			ProjectName:       "",
 			FunctionsDir:      "supabase/functions",
 			MigrationsDir:     "supabase/migrations",
 			ProtectedBranches: []string{"main", "master"},
@@ -61,9 +62,6 @@ func MergeWithDefaults(cfg *Config) *Config {
 	}
 
 	// Supabase defaults
-	if cfg.Supabase.ProjectRefFile == "" {
-		cfg.Supabase.ProjectRefFile = defaults.Supabase.ProjectRefFile
-	}
 	if cfg.Supabase.FunctionsDir == "" {
 		cfg.Supabase.FunctionsDir = defaults.Supabase.FunctionsDir
 	}

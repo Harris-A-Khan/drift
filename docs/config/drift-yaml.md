@@ -16,10 +16,12 @@ Drift looks for `drift.yaml` (or `drift.yml`) in:
 project:
   name: MyApp                    # Project name (auto-detected from .xcodeproj)
 
-# Supabase paths
+# Supabase configuration
 supabase:
-  functions_path: supabase/functions    # Path to edge functions
-  migrations_path: supabase/migrations  # Path to migrations
+  project_ref: abcdefghij               # Supabase project reference ID
+  project_name: my-project              # Supabase project display name
+  functions_dir: supabase/functions     # Path to edge functions
+  migrations_dir: supabase/migrations   # Path to migrations
 
 # Xcode configuration
 xcode:
@@ -72,14 +74,20 @@ project:
 
 ```yaml
 supabase:
-  functions_path: supabase/functions
-  migrations_path: supabase/migrations
+  project_ref: abcdefghij
+  project_name: my-project
+  functions_dir: supabase/functions
+  migrations_dir: supabase/migrations
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `functions_path` | Path to Edge Functions | `supabase/functions` |
-| `migrations_path` | Path to migrations | `supabase/migrations` |
+| `project_ref` | Supabase project reference ID | Set by `drift init` |
+| `project_name` | Supabase project display name | Set by `drift init` |
+| `functions_dir` | Path to Edge Functions | `supabase/functions` |
+| `migrations_dir` | Path to migrations | `supabase/migrations` |
+
+The `project_ref` replaces the need for a separate `.supabase-project-ref` file.
 
 ### xcode
 

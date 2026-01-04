@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
+	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
 	"github.com/undrift/drift/pkg/shell"
 )
@@ -22,10 +23,16 @@ detected settings and sensible defaults.`,
 	RunE: runInit,
 }
 
-var initForceFlag bool
+var (
+	initForceFlag          bool
+	initSupabaseProject    string
+	initSkipSupabaseLink   bool
+)
 
 func init() {
 	initCmd.Flags().BoolVarP(&initForceFlag, "force", "f", false, "Overwrite existing .drift.yaml")
+	initCmd.Flags().StringVarP(&initSupabaseProject, "supabase-project", "s", "", "Supabase project name to link")
+	initCmd.Flags().BoolVar(&initSkipSupabaseLink, "skip-link", false, "Skip Supabase project linking")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -66,6 +73,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	pType := typeOptions[idx]
 
+	// Handle Supabase project linking
+	var supabaseProjectRef, supabaseProjectName string
+	if !initSkipSupabaseLink {
+		ref, projName, err := resolveSupabaseProject()
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Could not link Supabase project: %v", err))
+			ui.Info("You can link later with 'supabase link'")
+		} else {
+			supabaseProjectRef = ref
+			supabaseProjectName = projName
+		}
+	}
+
 	// Detect APNs settings
 	teamID := detectTeamID()
 	bundleID := detectBundleID()
@@ -78,7 +98,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create configuration
-	configContent := generateConfig(name, pType, teamID, bundleID)
+	configContent := generateConfig(name, pType, teamID, bundleID, supabaseProjectRef, supabaseProjectName)
 
 	// Write configuration file
 	configPath := ".drift.yaml"
@@ -88,15 +108,138 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 	ui.Success(fmt.Sprintf("Created %s", configPath))
+
+	// Link Supabase project if we have a ref
+	if supabaseProjectRef != "" {
+		ui.NewLine()
+		sp := ui.NewSpinner("Linking Supabase project")
+		sp.Start()
+
+		client := supabase.NewClient()
+		if err := client.LinkProject(supabaseProjectRef); err != nil {
+			sp.Fail("Failed to link Supabase project")
+			ui.Warning(fmt.Sprintf("You can link manually: supabase link --project-ref %s", supabaseProjectRef))
+		} else {
+			sp.Success(fmt.Sprintf("Linked to Supabase project: %s", supabaseProjectName))
+		}
+	}
+
 	ui.NewLine()
 
 	// Show next steps
 	ui.SubHeader("Next Steps")
-	ui.NumberedList(1, "Run 'drift doctor' to check dependencies")
-	ui.NumberedList(2, "Run 'drift env setup' to generate Config.xcconfig")
-	ui.NumberedList(3, "Add Config.xcconfig to your Xcode project")
+	if supabaseProjectRef == "" {
+		ui.NumberedList(1, "Link Supabase project: supabase link")
+		ui.NumberedList(2, "Run 'drift env setup' to generate Config.xcconfig")
+		ui.NumberedList(3, "Add Config.xcconfig to your Xcode project")
+	} else {
+		ui.NumberedList(1, "Run 'drift env setup' to generate Config.xcconfig")
+		ui.NumberedList(2, "Add Config.xcconfig to your Xcode project")
+	}
 
 	return nil
+}
+
+// resolveSupabaseProject resolves the Supabase project to link.
+// Returns (projectRef, projectName, error)
+func resolveSupabaseProject() (string, string, error) {
+	client := supabase.NewClient()
+
+	// If project specified via flag, use that
+	if initSupabaseProject != "" {
+		return findSupabaseProjectByName(client, initSupabaseProject)
+	}
+
+	// Check if already linked
+	if client.IsLinked() {
+		ref, err := client.GetProjectRef()
+		if err == nil && ref != "" {
+			project, err := client.FindProjectByRef(ref)
+			if err == nil {
+				ui.Infof("Already linked to: %s", project.Name)
+				return ref, project.Name, nil
+			}
+			return ref, "", nil
+		}
+	}
+
+	// List all projects and let user select
+	ui.NewLine()
+	sp := ui.NewSpinner("Fetching Supabase projects")
+	sp.Start()
+
+	projects, err := client.ListProjects()
+	sp.Stop()
+
+	if err != nil {
+		return "", "", fmt.Errorf("failed to list projects: %w", err)
+	}
+
+	if len(projects) == 0 {
+		return "", "", fmt.Errorf("no Supabase projects found")
+	}
+
+	// Build options list
+	options := make([]string, len(projects))
+	for i, p := range projects {
+		options[i] = p.FormatProjectDisplay()
+	}
+
+	idx, _, err := ui.PromptSelectWithIndex("Select Supabase project", options)
+	if err != nil {
+		return "", "", err
+	}
+
+	selected := projects[idx]
+	return selected.Ref, selected.Name, nil
+}
+
+// findSupabaseProjectByName finds a project by name, prompting if multiple matches.
+func findSupabaseProjectByName(client *supabase.Client, name string) (string, string, error) {
+	sp := ui.NewSpinner(fmt.Sprintf("Looking for project: %s", name))
+	sp.Start()
+
+	matches, err := client.FindProjectsByName(name)
+	sp.Stop()
+
+	if err != nil {
+		return "", "", err
+	}
+
+	if len(matches) == 0 {
+		// Try listing all projects as a fallback
+		projects, err := client.ListProjects()
+		if err != nil {
+			return "", "", fmt.Errorf("project '%s' not found", name)
+		}
+
+		// Show available projects
+		ui.Warningf("No project named '%s' found", name)
+		ui.Info("Available projects:")
+		for _, p := range projects {
+			ui.List(p.FormatProjectDisplay())
+		}
+		return "", "", fmt.Errorf("project '%s' not found", name)
+	}
+
+	if len(matches) == 1 {
+		return matches[0].Ref, matches[0].Name, nil
+	}
+
+	// Multiple matches - let user select
+	ui.Warningf("Multiple projects named '%s' found", name)
+	options := make([]string, len(matches))
+	for i, p := range matches {
+		options[i] = p.FormatProjectDisplay()
+	}
+
+	idx, _, err := ui.PromptSelectWithIndex("Select project", options)
+	if err != nil {
+		return "", "", err
+	}
+
+	selected := matches[idx]
+	return selected.Ref, selected.Name, nil
 }
 
 func detectProjectName() string {
@@ -185,7 +328,7 @@ func detectBundleID() string {
 	return ""
 }
 
-func generateConfig(name, projectType, teamID, bundleID string) string {
+func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseName string) string {
 	// Detect existing paths
 	functionsDir := "supabase/functions"
 	migrationsDir := "supabase/migrations"
@@ -215,6 +358,32 @@ func generateConfig(name, projectType, teamID, bundleID string) string {
 	// Get worktree naming pattern
 	wtPattern := fmt.Sprintf("%s-{branch}", name)
 
+	// Build supabase section
+	supabaseSection := ""
+	if supabaseRef != "" {
+		supabaseSection = fmt.Sprintf(`supabase:
+  project_ref: %s
+  project_name: %s
+  functions_dir: %s
+  migrations_dir: %s
+  protected_branches:
+    - main
+    - master
+
+`, supabaseRef, supabaseName, functionsDir, migrationsDir)
+	} else {
+		supabaseSection = fmt.Sprintf(`supabase:
+  # project_ref: ""  # Set by 'drift init --supabase-project <name>' or 'supabase link'
+  # project_name: ""
+  functions_dir: %s
+  migrations_dir: %s
+  protected_branches:
+    - main
+    - master
+
+`, functionsDir, migrationsDir)
+	}
+
 	config := fmt.Sprintf(`# .drift.yaml - Project configuration for drift CLI
 # Generated by drift init
 
@@ -222,15 +391,7 @@ project:
   name: %s
   type: %s
 
-supabase:
-  project_ref_file: .supabase-project-ref
-  functions_dir: %s
-  migrations_dir: %s
-  protected_branches:
-    - main
-    - master
-
-`, name, projectType, functionsDir, migrationsDir)
+%s`, name, projectType, supabaseSection)
 
 	// Add APNs config if we have values
 	if teamID != "" || bundleID != "" {

@@ -12,18 +12,23 @@ drift init [flags]
 
 The `init` command creates a `drift.yaml` configuration file in your project root with sensible defaults. It detects your project structure and pre-configures paths for Supabase functions, migrations, and Xcode files.
 
+It also prompts you to select and link a Supabase project, storing the project reference directly in `drift.yaml`.
+
 ## Flags
 
 | Flag | Description |
 |------|-------------|
 | `--force`, `-f` | Overwrite existing configuration |
+| `--supabase-project`, `-s` | Supabase project name to link |
+| `--skip-link` | Skip Supabase project linking |
 
 ## What It Does
 
 1. Checks if already initialized (looks for `drift.yaml`)
 2. Detects project name from directory or `.xcodeproj`
-3. Scans for existing Supabase and Xcode files
-4. Creates `drift.yaml` with detected configuration
+3. Lists available Supabase projects and prompts for selection
+4. Links the selected Supabase project
+5. Creates `drift.yaml` with detected configuration and project reference
 
 ## Example
 
@@ -31,19 +36,34 @@ The `init` command creates a `drift.yaml` configuration file in your project roo
 $ drift init
 
 ╔══════════════════════════════════════════════════════════════╗
-║  Drift Initialization                                        ║
+║  Initialize Drift                                            ║
 ╚══════════════════════════════════════════════════════════════╝
 
-  Project:          MyApp
-  Functions Path:   supabase/functions
-  Migrations Path:  supabase/migrations
+───── Detected Settings
+  Project Name:     MyApp
+  Project Type:     ios
 
-✓ Created drift.yaml
+───── Configuration
+? Project name: MyApp
+? Project type: ios
+? Select Supabase project: pause [gkhvtzjajeykbashnavj, us-east-2, active]
 
-Next steps:
-  1. Review drift.yaml and adjust settings
-  2. Run 'drift env setup' to generate xcconfig
-  3. Run 'drift deploy status' to check deployment
+✓ Created .drift.yaml
+  Linking Supabase project... ✓ Linked to Supabase project: pause
+
+───── Next Steps
+  1. Run 'drift env setup' to generate Config.xcconfig
+  2. Add Config.xcconfig to your Xcode project
+```
+
+### Quick Init with Project Name
+
+```bash
+# Initialize and link by project name
+drift init --supabase-project pause
+
+# Skip linking (configure later)
+drift init --skip-link
 ```
 
 ## Generated Configuration
@@ -53,24 +73,26 @@ The generated `drift.yaml` includes:
 ```yaml
 project:
   name: MyApp
+  type: ios
 
 supabase:
-  functions_path: supabase/functions
-  migrations_path: supabase/migrations
-
-xcode:
-  xcconfig_path: Config.xcconfig
-  version_file: Version.xcconfig
-
-git:
+  project_ref: gkhvtzjajeykbashnavj
+  project_name: pause
+  functions_dir: supabase/functions
+  migrations_dir: supabase/migrations
   protected_branches:
     - main
     - master
-    - production
+
+xcode:
+  xcconfig_output: Config.xcconfig
+  version_file: Version.xcconfig
 
 backup:
   bucket: database-backups
 ```
+
+The `project_ref` is automatically populated when you select a Supabase project during init, eliminating the need for a separate `.supabase-project-ref` file.
 
 ## See Also
 
