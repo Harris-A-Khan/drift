@@ -22,14 +22,12 @@ func NewTable(headers []string) *Table {
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAutoWrapText(false)
 
-	// Style the header
-	table.SetHeaderColor(
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor},
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor},
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor},
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor},
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor},
-	)
+	// Style the header dynamically based on number of columns
+	headerColors := make([]tablewriter.Colors, len(headers))
+	for i := range headerColors {
+		headerColors[i] = tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor}
+	}
+	table.SetHeaderColor(headerColors...)
 
 	return &Table{writer: table}
 }
