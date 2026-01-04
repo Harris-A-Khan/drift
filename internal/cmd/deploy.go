@@ -55,7 +55,8 @@ var deployListSecretsCmd = &cobra.Command{
 }
 
 var (
-	deployBranchFlag string
+	deployBranchFlag     string
+	deployNoVerifyJWT    bool
 )
 
 func init() {
@@ -64,6 +65,10 @@ func init() {
 	deploySecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deployAllCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deployListSecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
+
+	// Add --no-verify-jwt flag to functions deployment
+	deployFunctionsCmd.Flags().BoolVar(&deployNoVerifyJWT, "no-verify-jwt", false, "Deploy functions without JWT verification")
+	deployAllCmd.Flags().BoolVar(&deployNoVerifyJWT, "no-verify-jwt", false, "Deploy functions without JWT verification")
 
 	deployCmd.AddCommand(deployFunctionsCmd)
 	deployCmd.AddCommand(deploySecretsCmd)
@@ -153,11 +158,19 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 
 	// Deploy each function
 	client := supabase.NewClient()
+	opts := supabase.DeployOptions{
+		NoVerifyJWT: deployNoVerifyJWT,
+	}
+
+	if deployNoVerifyJWT {
+		ui.Infof("Deploying with --no-verify-jwt")
+	}
+
 	for _, fn := range functions {
 		sp := ui.NewSpinner(fmt.Sprintf("Deploying %s", fn.Name))
 		sp.Start()
 
-		if err := client.DeployFunction(fn.Name, info.ProjectRef); err != nil {
+		if err := client.DeployFunctionWithOptions(fn.Name, info.ProjectRef, opts); err != nil {
 			sp.Fail(fmt.Sprintf("Failed to deploy %s", fn.Name))
 			return err
 		}

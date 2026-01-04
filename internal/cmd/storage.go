@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -323,13 +324,11 @@ BEGIN
 END $$;
 `, bucket, bucket, bucket, bucket, bucket, bucket)
 
-	// Execute SQL via psql
-	pgBin := cfg.Database.PGBin
-	if pgBin == "" {
-		pgBin = "/opt/homebrew/opt/postgresql@16/bin"
+	// Execute SQL via psql (must be in PATH)
+	psql, err := exec.LookPath("psql")
+	if err != nil {
+		return fmt.Errorf("psql not found in PATH. Install PostgreSQL and add it to your PATH")
 	}
-
-	psql := fmt.Sprintf("%s/psql", pgBin)
 
 	// Write SQL to temp file
 	tmpFile, err := os.CreateTemp("", "rls-*.sql")

@@ -15,6 +15,7 @@ type Config struct {
 	Supabase SupabaseConfig `yaml:"supabase" mapstructure:"supabase"`
 	APNS     APNSConfig     `yaml:"apns" mapstructure:"apns"`
 	Xcode    XcodeConfig    `yaml:"xcode" mapstructure:"xcode"`
+	Web      WebConfig      `yaml:"web" mapstructure:"web"`
 	Database DatabaseConfig `yaml:"database" mapstructure:"database"`
 	Backup   BackupConfig   `yaml:"backup" mapstructure:"backup"`
 	Worktree WorktreeConfig `yaml:"worktree" mapstructure:"worktree"`
@@ -23,10 +24,28 @@ type Config struct {
 	configPath string
 }
 
+// ProjectType constants.
+const (
+	ProjectTypeIOS           = "ios"
+	ProjectTypeMacOS         = "macos"
+	ProjectTypeMultiplatform = "multiplatform"
+	ProjectTypeWeb           = "web"
+)
+
 // ProjectConfig holds project-level configuration.
 type ProjectConfig struct {
 	Name string `yaml:"name" mapstructure:"name"`
-	Type string `yaml:"type" mapstructure:"type"` // ios, macos, multiplatform
+	Type string `yaml:"type" mapstructure:"type"` // ios, macos, multiplatform, web
+}
+
+// IsApplePlatform returns true if this is an iOS, macOS, or multiplatform project.
+func (p *ProjectConfig) IsApplePlatform() bool {
+	return p.Type == ProjectTypeIOS || p.Type == ProjectTypeMacOS || p.Type == ProjectTypeMultiplatform
+}
+
+// IsWebPlatform returns true if this is a web project.
+func (p *ProjectConfig) IsWebPlatform() bool {
+	return p.Type == ProjectTypeWeb
 }
 
 // SupabaseConfig holds Supabase-related configuration.
@@ -69,9 +88,13 @@ type XcodeConfig struct {
 	Schemes        map[string]string `yaml:"schemes" mapstructure:"schemes"`
 }
 
+// WebConfig holds web project configuration.
+type WebConfig struct {
+	EnvOutput string `yaml:"env_output" mapstructure:"env_output"` // .env.local by default
+}
+
 // DatabaseConfig holds database connection configuration.
 type DatabaseConfig struct {
-	PGBin       string `yaml:"pg_bin" mapstructure:"pg_bin"`
 	PoolerHost  string `yaml:"pooler_host" mapstructure:"pooler_host"`
 	PoolerPort  int    `yaml:"pooler_port" mapstructure:"pooler_port"`
 	DirectPort  int    `yaml:"direct_port" mapstructure:"direct_port"`
@@ -203,6 +226,11 @@ func (c *Config) GetXcconfigPath() string {
 // GetVersionFilePath returns the absolute path to the version file.
 func (c *Config) GetVersionFilePath() string {
 	return filepath.Join(c.ProjectRoot(), c.Xcode.VersionFile)
+}
+
+// GetEnvLocalPath returns the absolute path to the .env.local file for web projects.
+func (c *Config) GetEnvLocalPath() string {
+	return filepath.Join(c.ProjectRoot(), c.Web.EnvOutput)
 }
 
 // Exists checks if a .drift.yaml file exists in the current or parent directories.

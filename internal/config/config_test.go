@@ -83,7 +83,7 @@ func TestMergeWithDefaults_FillsMissingValues(t *testing.T) {
 			// Type is empty, should be filled
 		},
 		Database: DatabaseConfig{
-			PGBin: "/custom/path/bin",
+			PoolerHost: "custom.pooler.host",
 			// Other fields empty, should be filled
 		},
 	}
@@ -94,8 +94,8 @@ func TestMergeWithDefaults_FillsMissingValues(t *testing.T) {
 	if merged.Project.Name != "my-app" {
 		t.Errorf("MergeWithDefaults() should preserve Project.Name, got %q", merged.Project.Name)
 	}
-	if merged.Database.PGBin != "/custom/path/bin" {
-		t.Errorf("MergeWithDefaults() should preserve Database.PGBin, got %q", merged.Database.PGBin)
+	if merged.Database.PoolerHost != "custom.pooler.host" {
+		t.Errorf("MergeWithDefaults() should preserve Database.PoolerHost, got %q", merged.Database.PoolerHost)
 	}
 
 	// Should fill defaults

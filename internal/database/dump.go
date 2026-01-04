@@ -3,8 +3,7 @@ package database
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"os/exec"
 	"time"
 
 	"github.com/undrift/drift/pkg/shell"
@@ -12,24 +11,22 @@ import (
 
 // DumpOptions holds options for database dump.
 type DumpOptions struct {
-	PGBin       string
-	Host        string
-	Port        int
-	Database    string
-	User        string
-	Password    string
-	OutputFile  string
-	Format      string // "custom", "plain", "directory", "tar"
-	SchemaOnly  bool
-	DataOnly    bool
-	NoOwner     bool
-	CleanFirst  bool
+	Host       string
+	Port       int
+	Database   string
+	User       string
+	Password   string
+	OutputFile string
+	Format     string // "custom", "plain", "directory", "tar"
+	SchemaOnly bool
+	DataOnly   bool
+	NoOwner    bool
+	CleanFirst bool
 }
 
 // DefaultDumpOptions returns default dump options.
 func DefaultDumpOptions() DumpOptions {
 	return DumpOptions{
-		PGBin:    "/opt/homebrew/opt/postgresql@16/bin",
 		Database: "postgres",
 		User:     "postgres",
 		Port:     5432,
@@ -38,13 +35,20 @@ func DefaultDumpOptions() DumpOptions {
 	}
 }
 
+// findPGTool looks for a PostgreSQL tool in PATH.
+func findPGTool(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%s not found in PATH. Install PostgreSQL or add its bin directory to your PATH", name)
+	}
+	return path, nil
+}
+
 // Dump performs a database dump using pg_dump.
 func Dump(opts DumpOptions) error {
-	pgDump := filepath.Join(opts.PGBin, "pg_dump")
-
-	// Check if pg_dump exists
-	if _, err := os.Stat(pgDump); os.IsNotExist(err) {
-		return fmt.Errorf("pg_dump not found at %s", pgDump)
+	pgDump, err := findPGTool("pg_dump")
+	if err != nil {
+		return err
 	}
 
 	args := []string{
@@ -111,7 +115,10 @@ func GetDumpConnectionString(opts DumpOptions) string {
 
 // EstimateDatabaseSize returns an approximate size of the database.
 func EstimateDatabaseSize(opts DumpOptions) (string, error) {
-	psql := filepath.Join(opts.PGBin, "psql")
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return "", err
+	}
 
 	query := "SELECT pg_size_pretty(pg_database_size(current_database()));"
 

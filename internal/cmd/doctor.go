@@ -2,8 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"os/exec"
 	"runtime"
 	"strings"
 
@@ -142,55 +141,39 @@ func checkSupabase() checkResult {
 }
 
 func checkPgTools() checkResult {
-	// Try common locations
-	pgBinPaths := []string{
-		"/opt/homebrew/opt/postgresql@16/bin",
-		"/opt/homebrew/opt/postgresql@15/bin",
-		"/opt/homebrew/opt/postgresql@14/bin",
-		"/opt/homebrew/bin",
-		"/usr/local/opt/postgresql@16/bin",
-		"/usr/local/opt/postgresql@15/bin",
-		"/usr/local/bin",
-		"/usr/bin",
-	}
-
-	// Check environment variable first
-	if envPath := os.Getenv("PG_BIN"); envPath != "" {
-		pgBinPaths = append([]string{envPath}, pgBinPaths...)
-	}
-
-	// Also check config if available
-	cfg := config.LoadOrDefault()
-	if cfg.Database.PGBin != "" {
-		pgBinPaths = append([]string{cfg.Database.PGBin}, pgBinPaths...)
-	}
-
-	for _, binPath := range pgBinPaths {
-		pgDump := filepath.Join(binPath, "pg_dump")
-		if _, err := os.Stat(pgDump); err == nil {
-			// Found pg_dump, get version
-			result, err := shell.Run(pgDump, "--version")
-			if err == nil {
-				version := strings.TrimSpace(result.Stdout)
-				// Extract just the version number
-				parts := strings.Split(version, " ")
-				if len(parts) >= 3 {
-					version = parts[len(parts)-1]
-				}
-				return checkResult{
-					name:    "pg_dump",
-					status:  "ok",
-					version: version,
-					message: fmt.Sprintf("Found at %s", binPath),
-				}
-			}
+	// Check if pg_dump is in PATH
+	pgDumpPath, err := exec.LookPath("pg_dump")
+	if err != nil {
+		return checkResult{
+			name:   "pg_dump",
+			status: "error",
+			message: "pg_dump not found in PATH. Install with: brew install postgresql@16\n" +
+				"Then add to your shell profile: export PATH=\"/opt/homebrew/opt/postgresql@16/bin:$PATH\"",
 		}
+	}
+
+	// Get version
+	result, err := shell.Run(pgDumpPath, "--version")
+	if err != nil {
+		return checkResult{
+			name:    "pg_dump",
+			status:  "warning",
+			message: fmt.Sprintf("Found at %s but couldn't get version", pgDumpPath),
+		}
+	}
+
+	version := strings.TrimSpace(result.Stdout)
+	// Extract just the version number
+	parts := strings.Split(version, " ")
+	if len(parts) >= 3 {
+		version = parts[len(parts)-1]
 	}
 
 	return checkResult{
 		name:    "pg_dump",
-		status:  "error",
-		message: "PostgreSQL tools not found. Install with: brew install postgresql@16",
+		status:  "ok",
+		version: version,
+		message: fmt.Sprintf("Found at %s", pgDumpPath),
 	}
 }
 

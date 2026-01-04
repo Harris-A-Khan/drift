@@ -10,6 +10,7 @@ import (
 	"github.com/undrift/drift/internal/git"
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
+	"github.com/undrift/drift/internal/web"
 	"github.com/undrift/drift/internal/xcode"
 	"github.com/undrift/drift/pkg/shell"
 )
@@ -108,30 +109,55 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 		ui.Warning("Using fallback: no Supabase branch exists for this git branch")
 	}
 
-	// Check xcconfig status
+	// Check config file status based on project type
 	ui.NewLine()
-	ui.SubHeader("Xcconfig Status")
 
-	xcconfigPath := cfg.GetXcconfigPath()
-	if xcode.XcconfigExists(xcconfigPath) {
-		ui.KeyValue("Config File", xcconfigPath)
+	if cfg.Project.IsWebPlatform() {
+		ui.SubHeader("Environment File Status")
+		envLocalPath := cfg.GetEnvLocalPath()
+		if web.EnvLocalExists(envLocalPath) {
+			ui.KeyValue("Config File", envLocalPath)
 
-		currentEnv, err := xcode.GetCurrentEnvironment(xcconfigPath)
-		if err != nil {
-			ui.Warning(fmt.Sprintf("Could not read environment: %v", err))
-			ui.Infof("Run 'drift env setup' to regenerate")
-		} else {
-			ui.KeyValue("Configured Env", envColorString(currentEnv))
+			currentEnv, err := web.GetCurrentEnvironment(envLocalPath)
+			if err != nil {
+				ui.Warning(fmt.Sprintf("Could not read environment: %v", err))
+				ui.Infof("Run 'drift env setup' to regenerate")
+			} else {
+				ui.KeyValue("Configured Env", envColorString(currentEnv))
 
-			if currentEnv != string(info.Environment) {
-				ui.NewLine()
-				ui.Warning("Xcconfig environment doesn't match current branch!")
-				ui.Infof("Run 'drift env setup' to update")
+				if currentEnv != string(info.Environment) {
+					ui.NewLine()
+					ui.Warning("Environment file doesn't match current branch!")
+					ui.Infof("Run 'drift env setup' to update")
+				}
 			}
+		} else {
+			ui.Warning(".env.local not found")
+			ui.Infof("Run 'drift env setup' to generate it")
 		}
 	} else {
-		ui.Warning("Config.xcconfig not found")
-		ui.Infof("Run 'drift env setup' to generate it")
+		ui.SubHeader("Xcconfig Status")
+		xcconfigPath := cfg.GetXcconfigPath()
+		if xcode.XcconfigExists(xcconfigPath) {
+			ui.KeyValue("Config File", xcconfigPath)
+
+			currentEnv, err := xcode.GetCurrentEnvironment(xcconfigPath)
+			if err != nil {
+				ui.Warning(fmt.Sprintf("Could not read environment: %v", err))
+				ui.Infof("Run 'drift env setup' to regenerate")
+			} else {
+				ui.KeyValue("Configured Env", envColorString(currentEnv))
+
+				if currentEnv != string(info.Environment) {
+					ui.NewLine()
+					ui.Warning("Xcconfig environment doesn't match current branch!")
+					ui.Infof("Run 'drift env setup' to update")
+				}
+			}
+		} else {
+			ui.Warning("Config.xcconfig not found")
+			ui.Infof("Run 'drift env setup' to generate it")
+		}
 	}
 
 	return nil
@@ -193,24 +219,41 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 	}
 	sp.Stop()
 
-	// Generate xcconfig
-	sp = ui.NewSpinner("Generating Config.xcconfig")
-	sp.Start()
+	// Generate config file based on project type
+	var outputPath string
 
-	xcconfigPath := cfg.GetXcconfigPath()
-	generator := xcode.NewXcconfigGenerator(xcconfigPath)
+	if cfg.Project.IsWebPlatform() {
+		sp = ui.NewSpinner("Generating .env.local")
+		sp.Start()
 
-	if err := generator.GenerateFromBranchInfo(info, anonKey); err != nil {
-		sp.Fail("Failed to generate xcconfig")
-		return err
-	}
+		outputPath = cfg.GetEnvLocalPath()
+		generator := web.NewEnvLocalGenerator(outputPath)
 
-	sp.Success("Config.xcconfig generated")
+		if err := generator.GenerateFromBranchInfo(info, anonKey); err != nil {
+			sp.Fail("Failed to generate .env.local")
+			return err
+		}
 
-	// Generate buildServer.json if requested
-	if envBuildServerFlag {
-		if err := generateBuildServer(cfg, info); err != nil {
-			ui.Warning(fmt.Sprintf("Could not generate buildServer.json: %v", err))
+		sp.Success(".env.local generated")
+	} else {
+		sp = ui.NewSpinner("Generating Config.xcconfig")
+		sp.Start()
+
+		outputPath = cfg.GetXcconfigPath()
+		generator := xcode.NewXcconfigGenerator(outputPath)
+
+		if err := generator.GenerateFromBranchInfo(info, anonKey); err != nil {
+			sp.Fail("Failed to generate xcconfig")
+			return err
+		}
+
+		sp.Success("Config.xcconfig generated")
+
+		// Generate buildServer.json if requested (only for Apple platforms)
+		if envBuildServerFlag {
+			if err := generateBuildServer(cfg, info); err != nil {
+				ui.Warning(fmt.Sprintf("Could not generate buildServer.json: %v", err))
+			}
 		}
 	}
 
@@ -219,7 +262,7 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", envColorString(string(info.Environment)))
 	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
 	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
-	ui.KeyValue("Output", xcconfigPath)
+	ui.KeyValue("Output", outputPath)
 
 	return nil
 }

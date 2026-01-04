@@ -52,11 +52,24 @@ func ListFunctions(functionsDir string) ([]Function, error) {
 	return functions, nil
 }
 
+// DeployOptions holds options for function deployment.
+type DeployOptions struct {
+	NoVerifyJWT bool
+}
+
 // DeployFunction deploys a single Edge Function.
 func (c *Client) DeployFunction(name, projectRef string) error {
+	return c.DeployFunctionWithOptions(name, projectRef, DeployOptions{})
+}
+
+// DeployFunctionWithOptions deploys a single Edge Function with options.
+func (c *Client) DeployFunctionWithOptions(name, projectRef string, opts DeployOptions) error {
 	args := []string{"functions", "deploy", name}
 	if projectRef != "" {
 		args = append(args, "--project-ref", projectRef)
+	}
+	if opts.NoVerifyJWT {
+		args = append(args, "--no-verify-jwt")
 	}
 
 	result, err := shell.Run("supabase", args...)

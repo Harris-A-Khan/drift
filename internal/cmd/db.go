@@ -184,7 +184,6 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 
 	// Set up dump options
 	opts := database.DefaultDumpOptions()
-	opts.PGBin = cfg.Database.PGBin
 	opts.Host = host
 	opts.Port = cfg.Database.DirectPort
 	opts.Password = password
@@ -328,7 +327,6 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	// Set up restore options
 	opts := database.DefaultRestoreOptions()
-	opts.PGBin = cfg.Database.PGBin
 	opts.Host = host
 	opts.Port = cfg.Database.DirectPort
 	opts.Password = password

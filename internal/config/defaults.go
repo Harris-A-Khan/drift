@@ -29,8 +29,10 @@ func DefaultConfig() *Config {
 				"feature":     "",
 			},
 		},
+		Web: WebConfig{
+			EnvOutput: ".env.local",
+		},
 		Database: DatabaseConfig{
-			PGBin:       "/opt/homebrew/opt/postgresql@16/bin",
 			PoolerHost:  "aws-0-us-east-1.pooler.supabase.com",
 			PoolerPort:  6543,
 			DirectPort:  5432,
@@ -88,10 +90,12 @@ func MergeWithDefaults(cfg *Config) *Config {
 		cfg.Xcode.VersionFile = defaults.Xcode.VersionFile
 	}
 
-	// Database defaults
-	if cfg.Database.PGBin == "" {
-		cfg.Database.PGBin = defaults.Database.PGBin
+	// Web defaults
+	if cfg.Web.EnvOutput == "" {
+		cfg.Web.EnvOutput = defaults.Web.EnvOutput
 	}
+
+	// Database defaults
 	if cfg.Database.PoolerHost == "" {
 		cfg.Database.PoolerHost = defaults.Database.PoolerHost
 	}

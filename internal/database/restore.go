@@ -10,23 +10,21 @@ import (
 
 // RestoreOptions holds options for database restore.
 type RestoreOptions struct {
-	PGBin       string
-	Host        string
-	Port        int
-	Database    string
-	User        string
-	Password    string
-	InputFile   string
-	CleanFirst  bool
-	NoOwner     bool
-	SingleTxn   bool
-	Jobs        int // Number of parallel jobs
+	Host       string
+	Port       int
+	Database   string
+	User       string
+	Password   string
+	InputFile  string
+	CleanFirst bool
+	NoOwner    bool
+	SingleTxn  bool
+	Jobs       int // Number of parallel jobs
 }
 
 // DefaultRestoreOptions returns default restore options.
 func DefaultRestoreOptions() RestoreOptions {
 	return RestoreOptions{
-		PGBin:      "/opt/homebrew/opt/postgresql@16/bin",
 		Database:   "postgres",
 		User:       "postgres",
 		Port:       5432,
@@ -54,11 +52,9 @@ func Restore(opts RestoreOptions) error {
 
 // restoreCustom restores from a custom format backup using pg_restore.
 func restoreCustom(opts RestoreOptions) error {
-	pgRestore := filepath.Join(opts.PGBin, "pg_restore")
-
-	// Check if pg_restore exists
-	if _, err := os.Stat(pgRestore); os.IsNotExist(err) {
-		return fmt.Errorf("pg_restore not found at %s", pgRestore)
+	pgRestore, err := findPGTool("pg_restore")
+	if err != nil {
+		return err
 	}
 
 	args := []string{
@@ -104,10 +100,9 @@ func restoreCustom(opts RestoreOptions) error {
 
 // restoreSQL restores from a plain SQL file using psql.
 func restoreSQL(opts RestoreOptions) error {
-	psql := filepath.Join(opts.PGBin, "psql")
-
-	if _, err := os.Stat(psql); os.IsNotExist(err) {
-		return fmt.Errorf("psql not found at %s", psql)
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return err
 	}
 
 	args := []string{
@@ -140,7 +135,10 @@ func restoreSQL(opts RestoreOptions) error {
 
 // TestConnection tests the database connection.
 func TestConnection(opts RestoreOptions) error {
-	psql := filepath.Join(opts.PGBin, "psql")
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return err
+	}
 
 	env := map[string]string{
 		"PGPASSWORD": opts.Password,
@@ -168,7 +166,10 @@ func TestConnection(opts RestoreOptions) error {
 
 // ExecuteSQL executes a SQL statement.
 func ExecuteSQL(opts RestoreOptions, sql string) (*shell.Result, error) {
-	psql := filepath.Join(opts.PGBin, "psql")
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return nil, err
+	}
 
 	env := map[string]string{
 		"PGPASSWORD": opts.Password,
