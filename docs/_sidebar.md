@@ -6,6 +6,7 @@
 - **Commands**
   - [Overview](commands/overview.md)
   - [init](commands/init.md)
+  - [config](commands/config.md)
   - [env](commands/env.md)
   - [deploy](commands/deploy.md)
   - [branch](commands/branch.md)
