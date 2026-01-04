@@ -114,9 +114,13 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	xcconfigPath := cfg.GetXcconfigPath()
 	if xcode.XcconfigExists(xcconfigPath) {
+		ui.KeyValue("Config File", xcconfigPath)
+
 		currentEnv, err := xcode.GetCurrentEnvironment(xcconfigPath)
-		if err == nil {
-			ui.KeyValue("Config File", xcconfigPath)
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Could not read environment: %v", err))
+			ui.Infof("Run 'drift env setup' to regenerate")
+		} else {
 			ui.KeyValue("Configured Env", envColorString(currentEnv))
 
 			if currentEnv != string(info.Environment) {
