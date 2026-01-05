@@ -239,6 +239,14 @@ func (g *EnvLocalGenerator) Generate(data EnvLocalData) error {
 	return nil
 }
 
+// ExtractUserContent extracts user-added content from an existing .env.local file.
+// It looks for content after the DRIFT MANAGED END marker, or extracts non-drift
+// variables from legacy files without markers.
+// This is exported so it can be used to copy custom variables between environments.
+func ExtractUserContent(content string) string {
+	return extractUserContent(content)
+}
+
 // extractUserContent extracts user-added content from an existing .env.local file.
 // It looks for content after the DRIFT MANAGED END marker, or extracts non-drift
 // variables from legacy files without markers.

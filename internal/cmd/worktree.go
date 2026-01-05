@@ -308,6 +308,12 @@ func runWorktreeReady(cmd *cobra.Command, args []string) error {
 		if err := os.Chdir(wtPath); err == nil {
 			if cfg.Project.IsWebPlatform() {
 				ui.Info("Setting up .env.local...")
+
+				// Check if main worktree has custom variables to copy
+				mainEnvPath := filepath.Join(mainPath, ".env.local")
+				if _, statErr := os.Stat(mainEnvPath); statErr == nil {
+					envCopyCustomFromFlag = mainEnvPath
+				}
 			} else {
 				ui.Info("Setting up Config.xcconfig...")
 			}
@@ -317,6 +323,9 @@ func runWorktreeReady(cmd *cobra.Command, args []string) error {
 			if err := runEnvSetup(cmd, nil); err != nil {
 				ui.Warning(fmt.Sprintf("Could not setup environment config: %v", err))
 			}
+
+			// Reset the copy flag
+			envCopyCustomFromFlag = ""
 
 			os.Chdir(originalDir)
 		}

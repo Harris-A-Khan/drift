@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -18,11 +19,14 @@ import (
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Environment management",
-	Long: `Manage Supabase environment configuration and xcconfig generation.
+	Long: `Manage Supabase environment configuration.
 
-The env command helps you manage which Supabase environment your Xcode 
-project is configured to use. It auto-detects your git branch and maps 
-it to the appropriate Supabase branch (production, development, or feature).`,
+The env command helps you manage which Supabase environment your project
+is configured to use. It auto-detects your git branch and maps it to the
+appropriate Supabase branch (production, development, or feature).
+
+For web projects, it generates .env.local with all Supabase credentials.
+For iOS/macOS projects, it generates Config.xcconfig.`,
 }
 
 var envShowCmd = &cobra.Command{
@@ -34,33 +38,40 @@ var envShowCmd = &cobra.Command{
 
 var envSetupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Generate Config.xcconfig for current branch",
-	Long: `Generate Config.xcconfig with Supabase credentials for the current git branch.
+	Short: "Generate environment config for current branch",
+	Long: `Generate environment configuration with Supabase credentials for the current git branch.
 
 This command:
 1. Detects your current git branch
 2. Finds the matching Supabase branch (or falls back to development)
 3. Fetches the API keys for that branch
-4. Generates Config.xcconfig with the credentials`,
+4. Generates the appropriate config file:
+   - .env.local for web projects
+   - Config.xcconfig for iOS/macOS projects
+
+For web projects, you can copy custom variables from another .env.local file:
+  drift env setup --copy-custom-from /path/to/other/.env.local`,
 	RunE: runEnvSetup,
 }
 
 var envSwitchCmd = &cobra.Command{
 	Use:   "switch <branch>",
-	Short: "Setup xcconfig for a different Supabase branch",
-	Long:  `Generate Config.xcconfig for a specific Supabase branch, regardless of the current git branch.`,
+	Short: "Setup environment for a different Supabase branch",
+	Long:  `Generate environment config for a specific Supabase branch, regardless of the current git branch.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvSwitch,
 }
 
 var (
-	envBranchFlag      string
-	envBuildServerFlag bool
+	envBranchFlag        string
+	envBuildServerFlag   bool
+	envCopyCustomFromFlag string
 )
 
 func init() {
 	envSetupCmd.Flags().StringVarP(&envBranchFlag, "branch", "b", "", "Override Supabase branch selection")
 	envSetupCmd.Flags().BoolVar(&envBuildServerFlag, "build-server", false, "Also generate buildServer.json for sourcekit-lsp")
+	envSetupCmd.Flags().StringVar(&envCopyCustomFromFlag, "copy-custom-from", "", "Copy custom variables from another .env.local file")
 
 	envCmd.AddCommand(envShowCmd)
 	envCmd.AddCommand(envSetupCmd)
@@ -278,6 +289,13 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		}
 
 		sp.Success(".env.local generated")
+
+		// Copy custom variables from another file if requested
+		if envCopyCustomFromFlag != "" {
+			if err := copyCustomVariables(envCopyCustomFromFlag, outputPath); err != nil {
+				ui.Warning(fmt.Sprintf("Could not copy custom variables: %v", err))
+			}
+		}
 	} else {
 		sp = ui.NewSpinner("Generating Config.xcconfig")
 		sp.Start()
@@ -470,5 +488,60 @@ func schemeExists(scheme string) bool {
 
 	// Simple string check (not full JSON parsing for simplicity)
 	return len(result.Stdout) > 0 && (filepath.Base(scheme) != "" || os.Getenv("DRIFT_DEBUG") != "")
+}
+
+// copyCustomVariables copies custom (non-drift-managed) variables from a source
+// .env.local file to a destination file.
+func copyCustomVariables(sourcePath, destPath string) error {
+	// Read the source file
+	sourceData, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("could not read source file: %w", err)
+	}
+
+	// Extract custom variables from source
+	customContent := web.ExtractUserContent(string(sourceData))
+	if customContent == "" {
+		ui.Info("No custom variables found in source file")
+		return nil
+	}
+
+	// Read the destination file
+	destData, err := os.ReadFile(destPath)
+	if err != nil {
+		return fmt.Errorf("could not read destination file: %w", err)
+	}
+
+	// Check if destination already has the DRIFT MANAGED END marker
+	destContent := string(destData)
+	endMarker := web.DriftSectionEnd
+
+	// Find the end marker and append custom content after it
+	if idx := strings.Index(destContent, endMarker); idx != -1 {
+		// Find the end of the header section after the marker
+		afterMarker := destContent[idx+len(endMarker):]
+
+		// Find where the "CUSTOM VARIABLES" header ends
+		headerEnd := strings.Index(afterMarker, "# =============================================================================")
+		if headerEnd != -1 {
+			// Skip past the header line
+			nextNewline := strings.Index(afterMarker[headerEnd:], "\n")
+			if nextNewline != -1 {
+				headerEnd += nextNewline + 1
+			}
+		}
+
+		// Preserve the header and replace everything after with the new custom content
+		beforeCustom := destContent[:idx+len(endMarker)] + afterMarker[:headerEnd]
+		newContent := beforeCustom + customContent
+
+		if err := os.WriteFile(destPath, []byte(newContent), 0644); err != nil {
+			return fmt.Errorf("could not write destination file: %w", err)
+		}
+
+		ui.Success(fmt.Sprintf("Copied custom variables from %s", sourcePath))
+	}
+
+	return nil
 }
 
