@@ -198,6 +198,11 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		overrideBranch = cfg.Supabase.OverrideBranch
 	}
 
+	// Ensure Supabase is linked (uses project_ref from config)
+	if err := ensureSupabaseLinked(cfg); err != nil {
+		return err
+	}
+
 	// Resolve Supabase branch
 	client := supabase.NewClient()
 
@@ -488,6 +493,48 @@ func schemeExists(scheme string) bool {
 
 	// Simple string check (not full JSON parsing for simplicity)
 	return len(result.Stdout) > 0 && (filepath.Base(scheme) != "" || os.Getenv("DRIFT_DEBUG") != "")
+}
+
+// ensureSupabaseLinked checks if Supabase is linked in the current directory,
+// and links it using the project_ref from config if not.
+func ensureSupabaseLinked(cfg *config.Config) error {
+	// Check if already linked by trying to list branches
+	result, err := shell.Run("supabase", "branches", "list", "--output", "json")
+	if err == nil && result.ExitCode == 0 {
+		return nil // Already linked
+	}
+
+	// Check if error is about not being linked
+	errMsg := ""
+	if result != nil {
+		errMsg = result.Stderr + result.Stdout
+	}
+	if !strings.Contains(errMsg, "Have you run supabase link") {
+		// Some other error
+		return nil
+	}
+
+	// Not linked - try to link using project_ref from config
+	projectRef := cfg.Supabase.ProjectRef
+	if projectRef == "" {
+		return fmt.Errorf("Supabase not linked and no project_ref in config. Run 'supabase link' first")
+	}
+
+	sp := ui.NewSpinner("Linking Supabase project")
+	sp.Start()
+
+	result, err = shell.Run("supabase", "link", "--project-ref", projectRef)
+	if err != nil {
+		sp.Fail("Failed to link Supabase")
+		errMsg := ""
+		if result != nil {
+			errMsg = result.Stderr
+		}
+		return fmt.Errorf("failed to link Supabase: %s", errMsg)
+	}
+
+	sp.Success("Supabase linked")
+	return nil
 }
 
 // copyCustomVariables copies custom (non-drift-managed) variables from a source
