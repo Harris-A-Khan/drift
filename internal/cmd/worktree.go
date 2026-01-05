@@ -47,14 +47,16 @@ The branch can be:
 }
 
 var wtReadyCmd = &cobra.Command{
-	Use:   "ready <branch>",
+	Use:   "ready [branch]",
 	Short: "Create worktree with full setup",
 	Long: `Create a worktree and perform full setup:
-- Copy .env file
-- Copy APNs .p8 key files
-- Generate Config.xcconfig
-- Optionally open in VS Code`,
-	Args: cobra.ExactArgs(1),
+- Copy configured files (.env, .p8 keys, etc.)
+- Generate environment config (.env.local for web, Config.xcconfig for iOS)
+- Optionally open in VS Code
+
+If no branch is specified, shows an interactive picker to select
+an existing branch or create a new one.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runWorktreeReady,
 }
 
@@ -236,11 +238,24 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runWorktreeReady(cmd *cobra.Command, args []string) error {
-	branch := args[0]
 	cfg := config.LoadOrDefault()
 
+	var branch string
+
+	if len(args) == 1 {
+		branch = args[0]
+	} else {
+		// Interactive branch selection
+		selectedBranch, err := selectOrCreateBranch(cfg)
+		if err != nil {
+			return err
+		}
+		branch = selectedBranch
+	}
+
 	// First create the worktree
-	if err := runWorktreeCreate(cmd, args); err != nil {
+	createArgs := []string{branch}
+	if err := runWorktreeCreate(cmd, createArgs); err != nil {
 		// If worktree already exists, continue with setup
 		if !strings.Contains(err.Error(), "already exists") {
 			return err
@@ -286,17 +301,21 @@ func runWorktreeReady(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Setup xcconfig if enabled
+	// Setup environment config if enabled
 	if cfg.Worktree.AutoSetupXcconfig {
 		// Change to worktree directory and run env setup
 		originalDir, _ := os.Getwd()
 		if err := os.Chdir(wtPath); err == nil {
-			ui.Info("Setting up xcconfig...")
+			if cfg.Project.IsWebPlatform() {
+				ui.Info("Setting up .env.local...")
+			} else {
+				ui.Info("Setting up Config.xcconfig...")
+			}
 
 			// Run env setup in the new worktree
 			envBranchFlag = "" // Reset flag
 			if err := runEnvSetup(cmd, nil); err != nil {
-				ui.Warning(fmt.Sprintf("Could not setup xcconfig: %v", err))
+				ui.Warning(fmt.Sprintf("Could not setup environment config: %v", err))
 			}
 
 			os.Chdir(originalDir)
@@ -316,6 +335,124 @@ func runWorktreeReady(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// selectOrCreateBranch presents an interactive menu to select an existing branch
+// or create a new one.
+func selectOrCreateBranch(cfg *config.Config) (string, error) {
+	ui.Header("Select Branch")
+
+	// Get existing worktrees to filter out
+	existingWorktrees := make(map[string]bool)
+	worktrees, _ := git.ListWorktrees()
+	for _, wt := range worktrees {
+		existingWorktrees[wt.Branch] = true
+	}
+
+	// Build options list
+	options := []string{"+ Create new branch"}
+
+	// Add local branches that don't have worktrees
+	localBranches, _ := git.ListBranches()
+	for _, b := range localBranches {
+		if !existingWorktrees[b] && b != "main" && b != "master" && b != "development" {
+			options = append(options, b)
+		}
+	}
+
+	// Add remote branches that don't have local worktrees
+	remoteBranches, _ := git.ListRemoteBranches("origin")
+	for _, b := range remoteBranches {
+		if !existingWorktrees[b] && b != "main" && b != "master" && b != "development" {
+			// Check if not already in options
+			found := false
+			for _, opt := range options {
+				if opt == b {
+					found = true
+					break
+				}
+			}
+			if !found {
+				options = append(options, fmt.Sprintf("%s (remote)", b))
+			}
+		}
+	}
+
+	if len(options) == 1 {
+		// Only "Create new branch" option
+		ui.Info("No existing branches available")
+	}
+
+	idx, selected, err := ui.PromptSelectWithIndex("Choose a branch", options)
+	if err != nil {
+		return "", err
+	}
+
+	if idx == 0 {
+		// Create new branch
+		return createNewBranchInteractive(cfg)
+	}
+
+	// Extract branch name (remove " (remote)" suffix if present)
+	branch := strings.TrimSuffix(selected, " (remote)")
+
+	return branch, nil
+}
+
+// createNewBranchInteractive prompts the user for a new branch name and base branch.
+func createNewBranchInteractive(_ *config.Config) (string, error) {
+	ui.SubHeader("Create New Branch")
+
+	// Prompt for branch name
+	branchName, err := ui.PromptString("Branch name", "")
+	if err != nil {
+		return "", err
+	}
+
+	if branchName == "" {
+		return "", fmt.Errorf("branch name cannot be empty")
+	}
+
+	// Clean up branch name (replace spaces with dashes)
+	branchName = strings.ReplaceAll(branchName, " ", "-")
+	branchName = strings.ToLower(branchName)
+
+	// Suggest common prefixes
+	prefixOptions := []string{
+		"feat/" + branchName,
+		"fix/" + branchName,
+		"feature/" + branchName,
+		branchName,
+	}
+
+	idx, selected, err := ui.PromptSelectWithIndex("Branch name format", prefixOptions)
+	if err != nil {
+		return "", err
+	}
+
+	if idx < len(prefixOptions) {
+		branchName = selected
+	}
+
+	// Check if branch already exists
+	if git.BranchExists(branchName) {
+		return "", fmt.Errorf("branch '%s' already exists locally", branchName)
+	}
+
+	if git.RemoteBranchExists("origin", branchName) {
+		return "", fmt.Errorf("branch '%s' already exists on remote", branchName)
+	}
+
+	// Set the base branch flag for worktree creation
+	baseOptions := []string{"development", "main"}
+	_, wtFromFlag, err = ui.PromptSelectWithIndex("Create from", baseOptions)
+	if err != nil {
+		return "", err
+	}
+
+	ui.Infof("Will create branch '%s' from '%s'", ui.Cyan(branchName), ui.Cyan(wtFromFlag))
+
+	return branchName, nil
 }
 
 func runWorktreeOpen(cmd *cobra.Command, args []string) error {
