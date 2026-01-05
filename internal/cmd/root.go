@@ -29,18 +29,19 @@ func SetVersion(v string) {
 var rootCmd = &cobra.Command{
 	Use:   "drift",
 	Short: "Opinionated development workflow CLI for Supabase projects",
-	Long: `drift standardizes and abstracts opinionated development workflows 
-for Supabase-backed iOS/macOS projects.
+	Long: `drift standardizes and abstracts opinionated development workflows
+for Supabase-backed iOS, macOS, and web projects.
 
-It wraps common operations like environment switching, git worktree management, 
-database operations, edge function deployment, and migration pushing into a 
+It wraps common operations like environment switching, git worktree management,
+database operations, edge function deployment, and migration pushing into a
 single, cohesive CLI.
 
 Get started:
   drift init          Initialize drift in your project
   drift doctor        Check system dependencies
-  drift env show      Show current environment info
-  drift env setup     Generate xcconfig for current branch`,
+  drift status        Show project status overview
+  drift env setup     Generate environment config (.env.local or Config.xcconfig)
+  drift open          Open Supabase dashboard or related URLs`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

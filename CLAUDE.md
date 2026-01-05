@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Drift is an opinionated CLI for Supabase-backed iOS/macOS development workflows. It wraps common operations (environment switching, git worktrees, database operations, edge function deployment, migrations) into a cohesive tool.
+Drift is an opinionated CLI for Supabase-backed iOS, macOS, and web development workflows. It wraps common operations (environment switching, git worktrees, database operations, edge function deployment, migrations) into a cohesive tool.
 
 ## Build & Development Commands
 

@@ -1,6 +1,6 @@
 # Commands Overview
 
-Drift provides a comprehensive set of commands for managing Supabase-backed iOS/macOS projects.
+Drift provides a comprehensive set of commands for managing Supabase-backed iOS, macOS, and web projects.
 
 ## Command Structure
 

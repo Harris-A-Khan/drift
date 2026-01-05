@@ -1,6 +1,6 @@
 # Drift
 
-> A CLI tool for Supabase-backed iOS/macOS development workflows
+> A CLI tool for Supabase-backed iOS, macOS, and web development workflows
 
 Drift automates environment management, edge function deployment, database backups, and git worktree workflows for projects using Supabase as a backend.
 
