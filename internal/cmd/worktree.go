@@ -443,12 +443,43 @@ func createNewBranchInteractive(_ *config.Config) (string, error) {
 		return "", fmt.Errorf("branch '%s' already exists on remote", branchName)
 	}
 
-	// Set the base branch flag for worktree creation
-	baseOptions := []string{"development", "main"}
-	_, wtFromFlag, err = ui.PromptSelectWithIndex("Create from", baseOptions)
+	// Build base branch options - start with common ones, then add others
+	baseOptions := []string{}
+
+	// Add development first if it exists (recommended)
+	if git.BranchExists("development") || git.RemoteBranchExists("origin", "development") {
+		baseOptions = append(baseOptions, "development (recommended)")
+	}
+
+	// Add main/master
+	if git.BranchExists("main") || git.RemoteBranchExists("origin", "main") {
+		baseOptions = append(baseOptions, "main")
+	} else if git.BranchExists("master") || git.RemoteBranchExists("origin", "master") {
+		baseOptions = append(baseOptions, "master")
+	}
+
+	// Add other local branches
+	localBranches, _ := git.ListBranches()
+	for _, b := range localBranches {
+		// Skip if already added or is the new branch name
+		if b == "development" || b == "main" || b == "master" || b == branchName {
+			continue
+		}
+		baseOptions = append(baseOptions, b)
+	}
+
+	// Fallback if no branches found
+	if len(baseOptions) == 0 {
+		baseOptions = []string{"development", "main"}
+	}
+
+	_, selectedBase, err := ui.PromptSelectWithIndex("Create from", baseOptions)
 	if err != nil {
 		return "", err
 	}
+
+	// Clean up selection (remove " (recommended)" suffix)
+	wtFromFlag = strings.TrimSuffix(selectedBase, " (recommended)")
 
 	ui.Infof("Will create branch '%s' from '%s'", ui.Cyan(branchName), ui.Cyan(wtFromFlag))
 
