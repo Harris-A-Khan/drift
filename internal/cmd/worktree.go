@@ -59,14 +59,6 @@ The branch can be:
 	RunE: runWorktreeCreate,
 }
 
-var wtReadyCmd = &cobra.Command{
-	Use:    "ready [branch]",
-	Short:  "Alias for 'create' (deprecated)",
-	Long:   `Alias for 'drift worktree create'. Use 'create' instead.`,
-	Args:   cobra.MaximumNArgs(1),
-	Hidden: true,
-	RunE:   runWorktreeCreate,
-}
 
 var wtOpenCmd = &cobra.Command{
 	Use:   "open [branch]",
@@ -114,10 +106,6 @@ func init() {
 	wtCreateCmd.Flags().BoolVar(&wtOpenFlag, "open", false, "Open in VS Code after setup")
 	wtCreateCmd.Flags().BoolVar(&wtNoSetupFlag, "no-setup", false, "Skip file copying and environment setup")
 
-	// Ready flags (alias, uses same flags)
-	wtReadyCmd.Flags().StringVar(&wtFromFlag, "from", "development", "Base branch for new branches")
-	wtReadyCmd.Flags().BoolVar(&wtOpenFlag, "open", false, "Open in VS Code after setup")
-
 	// Open flags
 	wtOpenCmd.Flags().BoolVar(&wtFinderFlag, "finder", false, "Open in Finder instead of VS Code")
 	wtOpenCmd.Flags().BoolVar(&wtTermFlag, "terminal", false, "Open in Terminal instead of VS Code")
@@ -127,7 +115,6 @@ func init() {
 
 	worktreeCmd.AddCommand(wtListCmd)
 	worktreeCmd.AddCommand(wtCreateCmd)
-	worktreeCmd.AddCommand(wtReadyCmd)
 	worktreeCmd.AddCommand(wtOpenCmd)
 	worktreeCmd.AddCommand(wtDeleteCmd)
 	worktreeCmd.AddCommand(wtPathCmd)

@@ -43,7 +43,10 @@ drift env show
 
 ## drift env setup
 
-Generate `Config.xcconfig` for the current git branch.
+Generate environment configuration for the current git branch.
+
+- **Web projects:** Generates `.env.local`
+- **iOS/macOS projects:** Generates `Config.xcconfig`
 
 ```bash
 drift env setup [flags]
@@ -54,15 +57,17 @@ drift env setup [flags]
 | Flag | Description |
 |------|-------------|
 | `--branch`, `-b` | Override Supabase branch selection |
-| `--build-server` | Also generate buildServer.json for sourcekit-lsp |
+| `--copy-custom-from` | Copy custom (non-Supabase) variables from another .env.local file |
+| `--build-server` | Also generate buildServer.json for sourcekit-lsp (iOS/macOS only) |
 | `--scheme` | Xcode scheme to use for buildServer.json (requires --build-server) |
 
 **What It Does:**
 
 1. Detects current git branch
-2. Resolves matching Supabase branch (or falls back to development)
-3. Fetches anon key from Supabase
-4. Generates `Config.xcconfig` with all credentials
+2. Links Supabase if not already linked (prompts for project ref if needed)
+3. Resolves matching Supabase branch (or falls back to development)
+4. Fetches API keys from Supabase
+5. Generates the appropriate config file
 
 **Example:**
 
@@ -71,15 +76,29 @@ $ drift env setup
 
   Resolving Supabase branch... ✓
   Fetching API keys... ✓
-  Generating Config.xcconfig... ✓
+  Generating .env.local... ✓
 
   Environment:      Feature
   Supabase Branch:  feature-new-ui
   Project Ref:      abcdefghij
-  Output:           Config.xcconfig
+  Output:           .env.local
 ```
 
-**With buildServer.json:**
+### Copying Custom Variables (Web Projects)
+
+When switching environments, you may have custom variables in your `.env.local` that aren't managed by drift (e.g., `STRIPE_KEY`, `ANALYTICS_ID`). Use `--copy-custom-from` to preserve them:
+
+```bash
+# Copy custom variables from the main worktree's .env.local
+drift env setup --copy-custom-from ../main-project/.env.local
+
+# Or from any other .env.local file
+drift env setup --copy-custom-from ~/backups/.env.local.backup
+```
+
+This copies all variables that appear **after** the drift-managed section, preserving your custom configuration.
+
+### With buildServer.json (iOS/macOS):
 
 ```bash
 # Auto-detect scheme based on environment
