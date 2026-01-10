@@ -34,25 +34,21 @@ var wtListCmd = &cobra.Command{
 }
 
 var wtCreateCmd = &cobra.Command{
-	Use:   "create <branch>",
+	Use:   "create [branch]",
 	Short: "Create a new worktree",
 	Long: `Create a new worktree for a branch.
+
+If no branch is specified, interactive mode will prompt you to enter a
+branch name and select the base branch.
 
 The branch can be:
 - An existing local branch
 - An existing remote branch (will create a tracking branch)
-- A new branch name (will create from development)`,
-	Example: `  drift worktree create feat/my-feature
+- A new branch name (will create from the selected base)`,
+	Example: `  drift worktree create
+  drift worktree create feat/my-feature
   drift worktree create fix/bug-123 --from main`,
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return fmt.Errorf("please specify a branch name\n\nUsage: drift worktree create <branch>\n\nTip: Use 'drift worktree ready' for interactive branch selection")
-		}
-		if len(args) > 1 {
-			return fmt.Errorf("too many arguments, expected 1 branch name")
-		}
-		return nil
-	},
+	Args: cobra.MaximumNArgs(1),
 	RunE: runWorktreeCreate,
 }
 
@@ -196,8 +192,19 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 	if !RequireInit() {
 		return nil
 	}
-	branch := args[0]
 	cfg := config.LoadOrDefault()
+
+	var branch string
+	if len(args) == 1 {
+		branch = args[0]
+	} else {
+		// Interactive mode - prompt for branch name and base
+		selectedBranch, err := createNewBranchInteractive(cfg)
+		if err != nil {
+			return err
+		}
+		branch = selectedBranch
+	}
 
 	// Check if worktree already exists
 	if git.WorktreeExists(branch) {
