@@ -498,6 +498,11 @@ func schemeExists(scheme string) bool {
 // ensureSupabaseLinked checks if Supabase is linked in the current directory,
 // and links it using the project_ref from config if not.
 func ensureSupabaseLinked(cfg *config.Config) error {
+	// Check if Supabase CLI is available
+	if !shell.CommandExists("supabase") {
+		return fmt.Errorf("Supabase CLI not found. Install with: brew install supabase/tap/supabase")
+	}
+
 	// Check if already linked by trying to list branches
 	result, err := shell.Run("supabase", "branches", "list", "--output", "json")
 	if err == nil && result.ExitCode == 0 {
@@ -509,31 +514,64 @@ func ensureSupabaseLinked(cfg *config.Config) error {
 	if result != nil {
 		errMsg = result.Stderr + result.Stdout
 	}
+
 	if !strings.Contains(errMsg, "Have you run supabase link") {
-		// Some other error
+		// Some other error (auth, network, etc.) - report it instead of silently ignoring
+		if strings.Contains(errMsg, "not logged in") || strings.Contains(errMsg, "Access token") {
+			return fmt.Errorf("Supabase CLI not authenticated. Run 'supabase login' first")
+		}
+		// For other errors, warn but continue (might be a network blip)
+		if errMsg != "" {
+			ui.Warning(fmt.Sprintf("Could not check Supabase link status: %s", strings.TrimSpace(errMsg)))
+		}
 		return nil
 	}
 
-	// Not linked - try to link using project_ref from config
+	// Not linked - check if we have project_ref in config
 	projectRef := cfg.Supabase.ProjectRef
 	if projectRef == "" {
-		return fmt.Errorf("Supabase not linked and no project_ref in config. Run 'supabase link' first")
+		// No project_ref in config - ask user interactively
+		ui.Warning("Supabase is not linked to this directory")
+		ui.NewLine()
+
+		// Prompt for project ref
+		input, err := ui.PromptString("Enter Supabase project ref (or leave empty to skip)", "")
+		if err != nil || input == "" {
+			ui.Info("Skipping Supabase linking. Run 'supabase link' manually when ready.")
+			return nil
+		}
+		projectRef = strings.TrimSpace(input)
+	}
+
+	// Ask user for confirmation before linking
+	ui.Infof("Will link to Supabase project: %s", ui.Cyan(projectRef))
+	proceed, err := ui.PromptYesNo("Proceed with linking?", true)
+	if err != nil || !proceed {
+		ui.Info("Skipping Supabase linking")
+		return nil
 	}
 
 	sp := ui.NewSpinner("Linking Supabase project")
 	sp.Start()
 
 	result, err = shell.Run("supabase", "link", "--project-ref", projectRef)
-	if err != nil {
+	if err != nil || (result != nil && result.ExitCode != 0) {
 		sp.Fail("Failed to link Supabase")
 		errMsg := ""
 		if result != nil {
-			errMsg = result.Stderr
+			errMsg = strings.TrimSpace(result.Stderr + result.Stdout)
 		}
 		return fmt.Errorf("failed to link Supabase: %s", errMsg)
 	}
 
-	sp.Success("Supabase linked")
+	// Verify linking succeeded
+	verifyResult, verifyErr := shell.Run("supabase", "branches", "list", "--output", "json")
+	if verifyErr != nil || (verifyResult != nil && verifyResult.ExitCode != 0) {
+		sp.Fail("Linking verification failed")
+		return fmt.Errorf("Supabase linking appeared to succeed but verification failed. Try running 'supabase link' manually")
+	}
+
+	sp.Success("Supabase linked successfully")
 	return nil
 }
 

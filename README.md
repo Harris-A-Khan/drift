@@ -237,6 +237,24 @@ worktree:
 | `--no-color` | Disable colored output |
 | `--version` | Show version |
 
+## Documentation
+
+Full documentation is available in the `docs/` directory. To view it locally:
+
+```bash
+# Using Python (built-in)
+cd docs && python3 -m http.server 3000
+
+# Using npx (no install required)
+npx serve docs
+
+# Using docsify-cli
+npm i -g docsify-cli
+docsify serve docs
+```
+
+Then open http://localhost:3000 in your browser.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
