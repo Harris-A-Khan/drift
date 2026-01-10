@@ -66,13 +66,15 @@ var (
 	envBranchFlag         string
 	envBuildServerFlag    bool
 	envCopyCustomFromFlag string
+	envCopyEnvFlag        bool
 	envSchemeFlag         string
 )
 
 func init() {
 	envSetupCmd.Flags().StringVarP(&envBranchFlag, "branch", "b", "", "Override Supabase branch selection")
 	envSetupCmd.Flags().BoolVar(&envBuildServerFlag, "build-server", false, "Also generate buildServer.json for sourcekit-lsp")
-	envSetupCmd.Flags().StringVar(&envCopyCustomFromFlag, "copy-custom-from", "", "Copy custom variables from another .env.local file")
+	envSetupCmd.Flags().StringVar(&envCopyCustomFromFlag, "copy-custom-from", "", "Copy custom variables from a specific .env.local file path")
+	envSetupCmd.Flags().BoolVar(&envCopyEnvFlag, "copy-env", false, "Copy custom variables from another worktree (interactive picker)")
 	envSetupCmd.Flags().StringVar(&envSchemeFlag, "scheme", "", "Xcode scheme to use for buildServer.json (requires --build-server)")
 
 	envCmd.AddCommand(envShowCmd)
@@ -297,6 +299,16 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 
 		sp.Success(".env.local generated")
 
+		// Copy custom variables from another worktree (interactive picker)
+		if envCopyEnvFlag {
+			sourcePath, err := selectWorktreeConfigFile(cfg, ".env.local")
+			if err != nil {
+				ui.Warning(fmt.Sprintf("Could not select worktree: %v", err))
+			} else if sourcePath != "" {
+				envCopyCustomFromFlag = sourcePath
+			}
+		}
+
 		// Copy custom variables from another file if requested
 		if envCopyCustomFromFlag != "" {
 			if err := copyCustomVariables(envCopyCustomFromFlag, outputPath); err != nil {
@@ -316,6 +328,19 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		}
 
 		sp.Success("Config.xcconfig generated")
+
+		// Copy custom variables from another worktree (interactive picker)
+		if envCopyEnvFlag {
+			xcconfigName := filepath.Base(cfg.GetXcconfigPath())
+			sourcePath, err := selectWorktreeConfigFile(cfg, xcconfigName)
+			if err != nil {
+				ui.Warning(fmt.Sprintf("Could not select worktree: %v", err))
+			} else if sourcePath != "" {
+				if err := copyXcconfigCustomVariables(sourcePath, outputPath); err != nil {
+					ui.Warning(fmt.Sprintf("Could not copy custom variables: %v", err))
+				}
+			}
+		}
 
 		// Generate buildServer.json if requested (only for Apple platforms)
 		if envBuildServerFlag {
@@ -638,6 +663,78 @@ func copyCustomVariables(sourcePath, destPath string) error {
 		ui.Success(fmt.Sprintf("Copied custom variables from %s", sourcePath))
 	}
 
+	return nil
+}
+
+// selectWorktreeConfigFile shows an interactive picker of worktrees that have the specified
+// config file and returns the selected path.
+func selectWorktreeConfigFile(cfg *config.Config, filename string) (string, error) {
+	worktrees, err := git.ListWorktrees()
+	if err != nil {
+		return "", err
+	}
+
+	// Filter worktrees that have the config file (exclude current)
+	var options []string
+	var paths []string
+
+	for _, wt := range worktrees {
+		if wt.IsCurrent {
+			continue
+		}
+
+		configPath := filepath.Join(wt.Path, filename)
+		if _, err := os.Stat(configPath); err == nil {
+			display := fmt.Sprintf("%s (%s)", wt.Branch, wt.Path)
+			options = append(options, display)
+			paths = append(paths, configPath)
+		}
+	}
+
+	if len(options) == 0 {
+		ui.Infof("No other worktrees with %s files found", filename)
+		return "", nil
+	}
+
+	idx, _, err := ui.PromptSelectWithIndex("Copy custom variables from", options)
+	if err != nil {
+		return "", err
+	}
+
+	return paths[idx], nil
+}
+
+// copyXcconfigCustomVariables copies custom (non-drift-managed) variables from a source
+// xcconfig file to a destination file.
+func copyXcconfigCustomVariables(sourcePath, destPath string) error {
+	// Read the source file
+	sourceData, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("could not read source file: %w", err)
+	}
+
+	// Extract custom variables from source (everything after drift-managed section)
+	customContent := xcode.ExtractUserContent(string(sourceData))
+	if customContent == "" {
+		ui.Info("No custom variables found in source file")
+		return nil
+	}
+
+	// Read the destination file
+	destData, err := os.ReadFile(destPath)
+	if err != nil {
+		return fmt.Errorf("could not read destination file: %w", err)
+	}
+
+	// Append custom content to destination
+	destContent := string(destData)
+	newContent := strings.TrimRight(destContent, "\n") + "\n" + customContent
+
+	if err := os.WriteFile(destPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("could not write destination file: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Copied custom variables from %s", sourcePath))
 	return nil
 }
 

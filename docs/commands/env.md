@@ -57,7 +57,8 @@ drift env setup [flags]
 | Flag | Description |
 |------|-------------|
 | `--branch`, `-b` | Override Supabase branch selection |
-| `--copy-custom-from` | Copy custom (non-Supabase) variables from another .env.local file |
+| `--copy-env` | Copy custom variables from another worktree (interactive picker) |
+| `--copy-custom-from` | Copy custom variables from a specific file path |
 | `--build-server` | Also generate buildServer.json for sourcekit-lsp (iOS/macOS only) |
 | `--scheme` | Xcode scheme to use for buildServer.json (requires --build-server) |
 
@@ -84,17 +85,19 @@ $ drift env setup
   Output:           .env.local
 ```
 
-### Copying Custom Variables (Web Projects)
+### Copying Custom Variables
 
-When switching environments, you may have custom variables in your `.env.local` that aren't managed by drift (e.g., `STRIPE_KEY`, `ANALYTICS_ID`). Use `--copy-custom-from` to preserve them:
+When switching environments, you may have custom variables that aren't managed by drift (e.g., `STRIPE_KEY`, `ANALYTICS_ID`). Use `--copy-env` for an interactive picker or `--copy-custom-from` for a specific path:
 
 ```bash
-# Copy custom variables from the main worktree's .env.local
-drift env setup --copy-custom-from ../main-project/.env.local
+# Interactive: pick from existing worktrees
+drift env setup --copy-env
 
-# Or from any other .env.local file
-drift env setup --copy-custom-from ~/backups/.env.local.backup
+# Specific path
+drift env setup --copy-custom-from ../main-project/.env.local
 ```
+
+The `--copy-env` flag shows a list of worktrees that have the relevant config file (`.env.local` for web, `Config.xcconfig` for iOS/macOS) and lets you select one to copy from.
 
 This copies all variables that appear **after** the drift-managed section, preserving your custom configuration.
 

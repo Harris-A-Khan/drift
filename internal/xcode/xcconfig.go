@@ -208,6 +208,12 @@ func extractXcconfigUserContent(content string) string {
 	return ""
 }
 
+// ExtractUserContent extracts user-added content from an existing xcconfig file.
+// This is exported for use by other packages.
+func ExtractUserContent(content string) string {
+	return extractXcconfigUserContent(content)
+}
+
 // GenerateFromBranchInfo generates xcconfig from Supabase branch info.
 func (g *XcconfigGenerator) GenerateFromBranchInfo(info *supabase.BranchInfo, anonKey string) error {
 	data := XcconfigData{
