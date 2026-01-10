@@ -35,8 +35,13 @@ var wtListCmd = &cobra.Command{
 
 var wtCreateCmd = &cobra.Command{
 	Use:   "create [branch]",
-	Short: "Create a new worktree",
-	Long: `Create a new worktree for a branch.
+	Short: "Create a new worktree with full setup",
+	Long: `Create a new worktree for a branch with full setup.
+
+By default, this command:
+- Creates the git worktree
+- Copies configured files (.env, .p8 keys, etc.)
+- Generates environment config (.env.local for web, Config.xcconfig for iOS)
 
 If no branch is specified, interactive mode will prompt you to enter a
 branch name and select the base branch.
@@ -47,23 +52,20 @@ The branch can be:
 - A new branch name (will create from the selected base)`,
 	Example: `  drift worktree create
   drift worktree create feat/my-feature
-  drift worktree create fix/bug-123 --from main`,
+  drift worktree create feat/my-feature --open
+  drift worktree create fix/bug-123 --from main
+  drift worktree create feat/quick-test --no-setup`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runWorktreeCreate,
 }
 
 var wtReadyCmd = &cobra.Command{
-	Use:   "ready [branch]",
-	Short: "Create worktree with full setup",
-	Long: `Create a worktree and perform full setup:
-- Copy configured files (.env, .p8 keys, etc.)
-- Generate environment config (.env.local for web, Config.xcconfig for iOS)
-- Optionally open in VS Code
-
-If no branch is specified, shows an interactive picker to select
-an existing branch or create a new one.`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runWorktreeReady,
+	Use:    "ready [branch]",
+	Short:  "Alias for 'create' (deprecated)",
+	Long:   `Alias for 'drift worktree create'. Use 'create' instead.`,
+	Args:   cobra.MaximumNArgs(1),
+	Hidden: true,
+	RunE:   runWorktreeCreate,
 }
 
 var wtOpenCmd = &cobra.Command{
@@ -98,20 +100,23 @@ var wtPruneCmd = &cobra.Command{
 }
 
 var (
-	wtFromFlag   string
-	wtOpenFlag   bool
-	wtForceFlag  bool
-	wtFinderFlag bool
-	wtTermFlag   bool
+	wtFromFlag    string
+	wtOpenFlag    bool
+	wtForceFlag   bool
+	wtFinderFlag  bool
+	wtTermFlag    bool
+	wtNoSetupFlag bool
 )
 
 func init() {
 	// Create flags
 	wtCreateCmd.Flags().StringVar(&wtFromFlag, "from", "development", "Base branch for new branches")
+	wtCreateCmd.Flags().BoolVar(&wtOpenFlag, "open", false, "Open in VS Code after setup")
+	wtCreateCmd.Flags().BoolVar(&wtNoSetupFlag, "no-setup", false, "Skip file copying and environment setup")
 
-	// Ready flags
-	wtReadyCmd.Flags().BoolVar(&wtOpenFlag, "open", false, "Open in VS Code after setup")
+	// Ready flags (alias, uses same flags)
 	wtReadyCmd.Flags().StringVar(&wtFromFlag, "from", "development", "Base branch for new branches")
+	wtReadyCmd.Flags().BoolVar(&wtOpenFlag, "open", false, "Open in VS Code after setup")
 
 	// Open flags
 	wtOpenCmd.Flags().BoolVar(&wtFinderFlag, "finder", false, "Open in Finder instead of VS Code")
@@ -207,86 +212,70 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if worktree already exists
-	if git.WorktreeExists(branch) {
+	worktreeExists := git.WorktreeExists(branch)
+	if worktreeExists && wtNoSetupFlag {
 		return fmt.Errorf("worktree for branch '%s' already exists", branch)
 	}
 
-	// Determine worktree path
-	wtPath := git.GetWorktreePath(cfg.Project.Name, branch, cfg.Worktree.NamingPattern)
+	var wtPath string
 
-	ui.Infof("Creating worktree for branch '%s'", branch)
-	ui.KeyValue("Path", wtPath)
+	if !worktreeExists {
+		// Determine worktree path
+		wtPath = git.GetWorktreePath(cfg.Project.Name, branch, cfg.Worktree.NamingPattern)
 
-	// Check if branch exists locally
-	if git.BranchExists(branch) {
-		ui.Info("Using existing local branch")
-		if err := git.CreateWorktree(wtPath, branch, false, ""); err != nil {
-			return err
-		}
-	} else if git.RemoteBranchExists("origin", branch) {
-		// Branch exists on remote, create tracking branch
-		ui.Info("Creating from remote branch")
-		if err := git.CreateWorktreeFromRemote(wtPath, branch, branch); err != nil {
-			return err
-		}
-	} else {
-		// Create new branch from base
-		ui.Infof("Creating new branch from %s", wtFromFlag)
+		ui.Infof("Creating worktree for branch '%s'", branch)
+		ui.KeyValue("Path", wtPath)
 
-		// First ensure we have the latest from remote
-		_ = git.Fetch("origin")
+		// Check if branch exists locally
+		if git.BranchExists(branch) {
+			ui.Info("Using existing local branch")
+			if err := git.CreateWorktree(wtPath, branch, false, ""); err != nil {
+				return err
+			}
+		} else if git.RemoteBranchExists("origin", branch) {
+			// Branch exists on remote, create tracking branch
+			ui.Info("Creating from remote branch")
+			if err := git.CreateWorktreeFromRemote(wtPath, branch, branch); err != nil {
+				return err
+			}
+		} else {
+			// Create new branch from base
+			ui.Infof("Creating new branch from %s", wtFromFlag)
 
-		baseBranch := "origin/" + wtFromFlag
-		if !git.RemoteBranchExists("origin", wtFromFlag) {
-			if git.BranchExists(wtFromFlag) {
-				baseBranch = wtFromFlag
-			} else {
-				return fmt.Errorf("base branch '%s' not found", wtFromFlag)
+			// First ensure we have the latest from remote
+			_ = git.Fetch("origin")
+
+			baseBranch := "origin/" + wtFromFlag
+			if !git.RemoteBranchExists("origin", wtFromFlag) {
+				if git.BranchExists(wtFromFlag) {
+					baseBranch = wtFromFlag
+				} else {
+					return fmt.Errorf("base branch '%s' not found", wtFromFlag)
+				}
+			}
+
+			if err := git.CreateWorktree(wtPath, branch, true, baseBranch); err != nil {
+				return err
 			}
 		}
 
-		if err := git.CreateWorktree(wtPath, branch, true, baseBranch); err != nil {
-			return err
-		}
-	}
-
-	ui.Success(fmt.Sprintf("Worktree created at %s", wtPath))
-	return nil
-}
-
-func runWorktreeReady(cmd *cobra.Command, args []string) error {
-	cfg := config.LoadOrDefault()
-
-	var branch string
-
-	if len(args) == 1 {
-		branch = args[0]
+		ui.Success(fmt.Sprintf("Worktree created at %s", wtPath))
 	} else {
-		// Interactive branch selection
-		selectedBranch, err := selectOrCreateBranch(cfg)
+		// Worktree exists, get its path for setup
+		wt, err := git.GetWorktree(branch)
 		if err != nil {
 			return err
 		}
-		branch = selectedBranch
-	}
-
-	// First create the worktree
-	createArgs := []string{branch}
-	if err := runWorktreeCreate(cmd, createArgs); err != nil {
-		// If worktree already exists, continue with setup
-		if !strings.Contains(err.Error(), "already exists") {
-			return err
-		}
+		wtPath = wt.Path
 		ui.Info("Worktree already exists, continuing with setup...")
 	}
 
-	// Get worktree path
-	wt, err := git.GetWorktree(branch)
-	if err != nil {
-		return err
+	// Skip setup if --no-setup flag is set
+	if wtNoSetupFlag {
+		return nil
 	}
 
-	wtPath := wt.Path
+	// Perform full setup
 	mainPath, _ := git.GetMainWorktreePath()
 
 	ui.SubHeader("Setting up worktree")

@@ -6,6 +6,7 @@ Manage Git worktrees for parallel development.
 
 ```bash
 drift worktree <subcommand> [flags]
+drift wt <subcommand> [flags]  # Short alias
 ```
 
 ## Subcommands
@@ -13,9 +14,11 @@ drift worktree <subcommand> [flags]
 | Subcommand | Description |
 |------------|-------------|
 | `list` | List all worktrees |
-| `create` | Create a new worktree |
-| `remove` | Remove a worktree |
-| `goto` | Open a worktree directory |
+| `create` | Create a new worktree with full setup |
+| `delete` | Delete a worktree |
+| `open` | Open a worktree in VS Code, Finder, or Terminal |
+| `path` | Print the absolute path to a worktree |
+| `prune` | Clean stale worktree entries |
 
 ## What Are Worktrees?
 
@@ -26,79 +29,94 @@ Git worktrees allow you to have multiple working directories for the same reposi
 - Reviewing PRs while keeping your work intact
 - Running parallel builds
 
-## drift worktree list
-
-List all worktrees with their status.
-
-```bash
-$ drift worktree list
-
-╔══════════════════════════════════════════════════════════════╗
-║  Git Worktrees                                               ║
-╚══════════════════════════════════════════════════════════════╝
-
-  PATH                              BRANCH              STATUS
-  /path/to/project                  main                (main)
-  /path/to/project-feature-ui       feature/new-ui
-  /path/to/project-feature-api      feature/api-update
-
-→ Total: 3 worktrees
-```
-
 ## drift worktree create
 
-Create a new worktree for a branch.
+Create a new worktree for a branch with full setup.
 
 ```bash
-drift worktree create <branch> [flags]
+drift worktree create [branch] [flags]
 ```
+
+If no branch is specified, interactive mode prompts you to enter a branch name and select the base branch.
 
 **Flags:**
 
 | Flag | Description |
 |------|-------------|
-| `--path`, `-p` | Custom path for the worktree |
-| `--base`, `-b` | Base branch to create from |
-
-**Examples:**
-
-```bash
-# Create worktree from current branch
-drift worktree create feature/new-ui
-
-# Create from a specific base branch
-drift worktree create feature/new-ui --base develop
-
-# Specify custom path
-drift worktree create feature/new-ui --path ~/projects/myapp-ui
-```
+| `--from` | Base branch to create from (default: development) |
+| `--open` | Open in VS Code after setup |
+| `--no-setup` | Skip file copying and environment setup |
 
 **What It Does:**
 
 1. Creates a new directory alongside your main project
 2. Checks out the specified branch (creating it if needed)
-3. Sets up the worktree with a clean working directory
-4. Runs `drift env setup` to configure the environment
+3. Copies configured files (.env, .p8 keys, etc.)
+4. Generates environment config (.env.local for web, Config.xcconfig for iOS)
+5. Optionally opens in VS Code
+
+**Examples:**
+
+```bash
+# Interactive mode - prompts for branch name and base
+drift worktree create
+
+# Create worktree for a new feature branch
+drift worktree create feat/new-feature
+
+# Create and open in VS Code
+drift worktree create feat/new-feature --open
+
+# Create from main instead of development
+drift worktree create hotfix/urgent --from main
+
+# Just create worktree without setup (bare)
+drift worktree create feat/quick-test --no-setup
+```
 
 **Default Path:**
 
-By default, worktrees are created at:
+Worktrees are created at:
 ```
 ../project-name-sanitized-branch-name
 ```
 
-For example:
+For example, if your project is `myapp` and branch is `feat/new-ui`:
 ```
-../myapp-feature-new-ui
+../myapp-feat-new-ui
 ```
 
-## drift worktree remove
+## drift worktree list
 
-Remove a worktree.
+List all worktrees with their status.
 
 ```bash
-drift worktree remove <branch> [flags]
+drift worktree list
 ```
+
+**Example Output:**
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  Git Worktrees                                               ║
+╚══════════════════════════════════════════════════════════════╝
+
+  main         /path/to/project                   ← you are here
+  development  /path/to/project-development
+  feat/new-ui  /path/to/project-feat-new-ui
+
+→ Total: 3 worktrees
+```
+
+## drift worktree delete
+
+Delete a worktree.
+
+```bash
+drift worktree delete [branch] [flags]
+```
+
+If no branch is specified, shows an interactive picker.
 
 **Flags:**
 
@@ -109,45 +127,91 @@ drift worktree remove <branch> [flags]
 **Example:**
 
 ```bash
-# Remove worktree
-drift worktree remove feature/new-ui
+# Interactive selection
+drift worktree delete
 
-# Force remove with uncommitted changes
-drift worktree remove feature/new-ui --force
+# Delete specific worktree
+drift worktree delete feat/new-ui
+
+# Force delete with uncommitted changes
+drift worktree delete feat/new-ui --force
 ```
 
-## drift worktree goto
+## drift worktree open
 
-Open a worktree directory in your shell or editor.
+Open a worktree in VS Code, Finder, or Terminal.
 
 ```bash
-drift worktree goto <branch>
+drift worktree open [branch] [flags]
 ```
 
-## Worktree Workflow
+If no branch is specified, shows an interactive picker.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--finder` | Open in Finder instead of VS Code |
+| `--terminal` | Open in Terminal instead of VS Code |
+
+**Example:**
 
 ```bash
-# Start a new feature
-drift worktree create feature/payment-v2
+# Interactive selection, open in VS Code
+drift worktree open
 
-# Navigate to it
-cd ../myapp-feature-payment-v2
+# Open specific worktree
+drift worktree open feat/new-ui
 
-# Work on the feature...
+# Open in Finder
+drift worktree open feat/new-ui --finder
+
+# Open in Terminal
+drift worktree open feat/new-ui --terminal
+```
+
+## drift worktree path
+
+Print the absolute path to a worktree.
+
+```bash
+drift worktree path <branch>
+```
+
+Useful for scripting:
+
+```bash
+cd $(drift worktree path feat/new-ui)
+```
+
+## drift worktree prune
+
+Remove stale worktree entries for worktrees that no longer exist on disk.
+
+```bash
+drift worktree prune
+```
+
+## Typical Workflow
+
+```bash
+# Start a new feature (interactive)
+drift worktree create
+# → Enter branch name: payment-v2
+# → Select format: feat/payment-v2
+# → Select base: development
+
+# Or directly
+drift worktree create feat/payment-v2 --open
+
+# Work on the feature in VS Code...
 # Main branch remains untouched
 
-# Set up environment for this worktree
-drift env setup
-
-# Deploy to feature environment
-drift deploy all
-
 # When done, clean up
-cd ../myapp
-drift worktree remove feature/payment-v2
+drift worktree delete feat/payment-v2
 ```
 
 ## See Also
 
-- [Branch Management](branch.md)
 - [Environment Management](env.md)
+- [Configuration](../config/drift-yaml.md)

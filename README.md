@@ -80,14 +80,15 @@ drift env switch <branch>   # Switch to a different environment
 Manage git worktrees for parallel development.
 
 ```bash
-drift wt list              # List all worktrees
-drift wt create <branch>   # Create a new worktree
-drift wt ready <branch>    # Create + setup + copy files
-drift wt ready <branch> --open  # Also open in VS Code
-drift wt open [branch]     # Open worktree in VS Code
-drift wt delete [branch]   # Delete a worktree
-drift wt path <branch>     # Print worktree path
-drift wt prune             # Clean stale entries
+drift wt list                     # List all worktrees
+drift wt create                   # Interactive: create + setup
+drift wt create <branch>          # Create worktree with full setup
+drift wt create <branch> --open   # Create, setup, and open in VS Code
+drift wt create <branch> --no-setup  # Just create (no file copying/env setup)
+drift wt open [branch]            # Open worktree in VS Code
+drift wt delete [branch]          # Delete a worktree
+drift wt path <branch>            # Print worktree path
+drift wt prune                    # Clean stale entries
 ```
 
 ### Deployment (`drift deploy`)
