@@ -1,10 +1,10 @@
-# drift.yaml Configuration
+# .drift.yaml Configuration
 
-The `drift.yaml` file configures Drift for your project.
+The `.drift.yaml` file configures Drift for your project.
 
 ## Location
 
-Drift looks for `drift.yaml` (or `drift.yml`) in:
+Drift looks for `.drift.yaml` (or `.drift.yml`) in:
 
 1. Current directory
 2. Parent directories (up to git root)

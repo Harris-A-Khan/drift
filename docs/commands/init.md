@@ -10,9 +10,9 @@ drift init [flags]
 
 ## Description
 
-The `init` command creates a `drift.yaml` configuration file in your project root with sensible defaults. It detects your project structure and pre-configures paths for Supabase functions, migrations, and Xcode files.
+The `init` command creates a `.drift.yaml` configuration file in your project root with sensible defaults. It detects your project structure and pre-configures paths for Supabase functions, migrations, and Xcode files.
 
-It also prompts you to select and link a Supabase project, storing the project reference directly in `drift.yaml`.
+It also prompts you to select and link a Supabase project, storing the project reference directly in `.drift.yaml`.
 
 ## Flags
 
@@ -24,11 +24,11 @@ It also prompts you to select and link a Supabase project, storing the project r
 
 ## What It Does
 
-1. Checks if already initialized (looks for `drift.yaml`)
+1. Checks if already initialized (looks for `.drift.yaml`)
 2. Detects project name from directory or `.xcodeproj`
 3. Lists available Supabase projects and prompts for selection
 4. Links the selected Supabase project
-5. Creates `drift.yaml` with detected configuration and project reference
+5. Creates `.drift.yaml` with detected configuration and project reference
 
 ## Example
 
@@ -68,7 +68,7 @@ drift init --skip-link
 
 ## Generated Configuration
 
-The generated `drift.yaml` includes:
+The generated `.drift.yaml` includes:
 
 ```yaml
 project:

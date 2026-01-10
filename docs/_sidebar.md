@@ -16,7 +16,7 @@
   - [version](commands/version.md)
 
 - **Configuration**
-  - [drift.yaml](config/drift-yaml.md)
+  - [.drift.yaml](config/drift-yaml.md)
   - [Environment Variables](config/environment.md)
 
 - **Guides**

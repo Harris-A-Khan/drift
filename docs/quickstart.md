@@ -11,11 +11,11 @@ cd /path/to/your/ios-project
 drift init
 ```
 
-This creates a `drift.yaml` configuration file with sensible defaults.
+This creates a `.drift.yaml` configuration file with sensible defaults.
 
 ## 2. Configure Your Project
 
-Edit `drift.yaml` to match your project:
+Edit `.drift.yaml` to match your project:
 
 ```yaml
 project:
