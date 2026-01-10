@@ -42,7 +42,17 @@ The branch can be:
 - An existing local branch
 - An existing remote branch (will create a tracking branch)
 - A new branch name (will create from development)`,
-	Args: cobra.ExactArgs(1),
+	Example: `  drift worktree create feat/my-feature
+  drift worktree create fix/bug-123 --from main`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("please specify a branch name\n\nUsage: drift worktree create <branch>\n\nTip: Use 'drift worktree ready' for interactive branch selection")
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("too many arguments, expected 1 branch name")
+		}
+		return nil
+	},
 	RunE: runWorktreeCreate,
 }
 
