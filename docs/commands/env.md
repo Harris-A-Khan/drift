@@ -55,6 +55,7 @@ drift env setup [flags]
 |------|-------------|
 | `--branch`, `-b` | Override Supabase branch selection |
 | `--build-server` | Also generate buildServer.json for sourcekit-lsp |
+| `--scheme` | Xcode scheme to use for buildServer.json (requires --build-server) |
 
 **What It Does:**
 
@@ -81,10 +82,14 @@ $ drift env setup
 **With buildServer.json:**
 
 ```bash
+# Auto-detect scheme based on environment
 drift env setup --build-server
+
+# Specify a specific scheme
+drift env setup --build-server --scheme "MyApp (Development)"
 ```
 
-This also generates `buildServer.json` for sourcekit-lsp support in VS Code.
+This generates `buildServer.json` for sourcekit-lsp support in VS Code. By default, the scheme is auto-detected based on the current environment. Use `--scheme` to override this and specify exactly which Xcode scheme to use.
 
 ## drift env switch
 

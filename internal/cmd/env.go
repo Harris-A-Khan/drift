@@ -63,15 +63,17 @@ var envSwitchCmd = &cobra.Command{
 }
 
 var (
-	envBranchFlag        string
-	envBuildServerFlag   bool
+	envBranchFlag         string
+	envBuildServerFlag    bool
 	envCopyCustomFromFlag string
+	envSchemeFlag         string
 )
 
 func init() {
 	envSetupCmd.Flags().StringVarP(&envBranchFlag, "branch", "b", "", "Override Supabase branch selection")
 	envSetupCmd.Flags().BoolVar(&envBuildServerFlag, "build-server", false, "Also generate buildServer.json for sourcekit-lsp")
 	envSetupCmd.Flags().StringVar(&envCopyCustomFromFlag, "copy-custom-from", "", "Copy custom variables from another .env.local file")
+	envSetupCmd.Flags().StringVar(&envSchemeFlag, "scheme", "", "Xcode scheme to use for buildServer.json (requires --build-server)")
 
 	envCmd.AddCommand(envShowCmd)
 	envCmd.AddCommand(envSetupCmd)
@@ -317,7 +319,7 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 
 		// Generate buildServer.json if requested (only for Apple platforms)
 		if envBuildServerFlag {
-			if err := generateBuildServer(cfg, info); err != nil {
+			if err := generateBuildServer(cfg, info, envSchemeFlag); err != nil {
 				ui.Warning(fmt.Sprintf("Could not generate buildServer.json: %v", err))
 			}
 		}
@@ -353,7 +355,8 @@ func envColorString(env string) string {
 
 // generateBuildServer generates buildServer.json for sourcekit-lsp support.
 // This enables better IDE integration for Swift projects in VS Code and other editors.
-func generateBuildServer(cfg *config.Config, info *supabase.BranchInfo) error {
+// If schemeOverride is provided, it will be used instead of auto-detection.
+func generateBuildServer(cfg *config.Config, info *supabase.BranchInfo, schemeOverride string) error {
 	// Check if xcode-build-server is installed
 	if !shell.CommandExists("xcode-build-server") {
 		ui.Warning("xcode-build-server not found")
@@ -371,15 +374,18 @@ func generateBuildServer(cfg *config.Config, info *supabase.BranchInfo) error {
 		matches, _ = filepath.Glob("*.xcworkspace")
 		if len(matches) > 0 {
 			// Use workspace with -workspace flag instead
-			return generateBuildServerWithWorkspace(cfg, info, matches[0])
+			return generateBuildServerWithWorkspace(cfg, info, matches[0], schemeOverride)
 		}
 		return fmt.Errorf("no .xcodeproj or .xcworkspace found")
 	}
 
-	// Determine scheme based on environment
-	scheme := getSchemeForEnvironment(cfg, info)
+	// Determine scheme - use override if provided, otherwise auto-detect
+	scheme := schemeOverride
 	if scheme == "" {
-		return fmt.Errorf("could not determine Xcode scheme")
+		scheme = getSchemeForEnvironment(cfg, info)
+	}
+	if scheme == "" {
+		return fmt.Errorf("could not determine Xcode scheme. Use --scheme to specify one")
 	}
 
 	sp := ui.NewSpinner("Generating buildServer.json")
@@ -400,10 +406,15 @@ func generateBuildServer(cfg *config.Config, info *supabase.BranchInfo) error {
 }
 
 // generateBuildServerWithWorkspace generates buildServer.json using a workspace.
-func generateBuildServerWithWorkspace(cfg *config.Config, info *supabase.BranchInfo, workspace string) error {
-	scheme := getSchemeForEnvironment(cfg, info)
+// If schemeOverride is provided, it will be used instead of auto-detection.
+func generateBuildServerWithWorkspace(cfg *config.Config, info *supabase.BranchInfo, workspace string, schemeOverride string) error {
+	// Determine scheme - use override if provided, otherwise auto-detect
+	scheme := schemeOverride
 	if scheme == "" {
-		return fmt.Errorf("could not determine Xcode scheme")
+		scheme = getSchemeForEnvironment(cfg, info)
+	}
+	if scheme == "" {
+		return fmt.Errorf("could not determine Xcode scheme. Use --scheme to specify one")
 	}
 
 	sp := ui.NewSpinner("Generating buildServer.json")

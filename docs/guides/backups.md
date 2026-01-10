@@ -26,22 +26,23 @@ This creates:
 - RLS policies for secure access
 - Folder structure (`prod/`, `dev/`)
 
-### 2. Configure Database Access
+### 2. Install PostgreSQL Tools
 
-Set up PostgreSQL tools:
-
-```yaml
-# drift.yaml
-database:
-  pg_bin: /opt/homebrew/opt/postgresql@16/bin
-  pooler_host: aws-0-us-east-1.pooler.supabase.com
-  pooler_port: 6543
-```
-
-Install PostgreSQL client:
+Install PostgreSQL client and add to your PATH:
 
 ```bash
 brew install postgresql@16
+
+# Add to ~/.zshrc
+export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
+```
+
+Optionally configure pooler settings in `drift.yaml`:
+
+```yaml
+database:
+  pooler_host: aws-0-us-east-1.pooler.supabase.com
+  pooler_port: 6543
 ```
 
 ## Creating Backups

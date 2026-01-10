@@ -49,7 +49,6 @@ apns:
 
 # Database settings
 database:
-  pg_bin: /opt/homebrew/opt/postgresql@16/bin  # PostgreSQL binaries path
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
 
@@ -169,16 +168,16 @@ apns:
 
 ```yaml
 database:
-  pg_bin: /opt/homebrew/opt/postgresql@16/bin
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `pg_bin` | PostgreSQL binaries path | `/opt/homebrew/opt/postgresql@16/bin` |
 | `pooler_host` | Supabase pooler host | `aws-0-us-east-1.pooler.supabase.com` |
 | `pooler_port` | Pooler port | `6543` |
+
+> **Note:** PostgreSQL binaries (`pg_dump`, `pg_restore`) must be in your PATH. Install with `brew install postgresql@16` and add to your shell profile: `export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"`
 
 ### backup
 

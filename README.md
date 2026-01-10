@@ -181,7 +181,6 @@ xcode:
   version_file: Version.xcconfig
 
 database:
-  pg_bin: /opt/homebrew/opt/postgresql@16/bin
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
   direct_port: 5432
@@ -207,7 +206,6 @@ worktree:
 | `DEV_PASSWORD` | Development database password |
 | `PROD_PROJECT_REF` | Production Supabase project ref |
 | `DEV_PROJECT_REF` | Development Supabase project ref |
-| `PG_BIN` | Path to PostgreSQL binaries |
 | `APNS_KEY_ID` | APNs key ID |
 | `APNS_TEAM_ID` | APNs team ID |
 | `APNS_BUNDLE_ID` | APNs bundle ID |
@@ -222,10 +220,12 @@ worktree:
 
 - **For database operations:**
   - PostgreSQL (`brew install postgresql@16`)
+  - Add to PATH in `~/.zshrc`: `export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"`
 
 - **Optional:**
   - fzf (for interactive selection)
   - VS Code (for opening worktrees)
+  - xcode-build-server (`brew install xcode-build-server`) for sourcekit-lsp support
 
 ## Global Flags
 
@@ -239,7 +239,14 @@ worktree:
 
 ## Documentation
 
-Full documentation is available in the `docs/` directory. To view it locally:
+Full documentation is available in the `docs/` directory, including:
+
+- **Command Reference** - Detailed usage for all commands (`env`, `worktree`, `deploy`, `db`, `migrate`, etc.)
+- **Configuration Guide** - Complete `.drift.yaml` reference
+- **Guides** - Xcode integration, worktree workflows, backup strategies
+- **Architecture** - How drift works internally
+
+### Viewing Docs Locally
 
 ```bash
 # Using Python (built-in)
