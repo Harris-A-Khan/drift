@@ -53,7 +53,7 @@ drift doctor
 drift env setup
 
 # Create a feature worktree with full setup
-drift worktree ready feat/my-feature --open
+drift worktree create feat/my-feature --open
 
 # Deploy edge functions
 drift deploy all
@@ -66,30 +66,46 @@ drift migrate push
 
 ### Environment Management (`drift env`)
 
-Manage Supabase environment configuration and xcconfig generation.
+Manage Supabase environment configuration and config file generation.
 
 ```bash
 drift env show              # Show current environment info
-drift env setup             # Generate Config.xcconfig for current branch
-drift env setup --branch X  # Generate for a specific branch
+drift env setup             # Generate config for current branch
+drift env setup --branch X  # Generate for a specific Supabase branch
+drift env setup --copy-env  # Copy custom variables from another worktree
 drift env switch <branch>   # Switch to a different environment
+```
+
+For iOS/macOS projects, generates `Config.xcconfig`. For web projects, generates `.env.local`.
+
+### Configuration (`drift config`)
+
+View and modify drift configuration.
+
+```bash
+drift config show           # Show current configuration
+drift config set-branch     # Interactive: set Supabase branch override
+drift config set-branch X   # Force use of Supabase branch X
+drift config clear-branch   # Clear the override, use auto-detection
 ```
 
 ### Worktree Management (`drift worktree` / `drift wt`)
 
-Manage git worktrees for parallel development.
+Manage git worktrees for parallel development with full environment setup.
 
 ```bash
-drift wt list                     # List all worktrees
-drift wt create                   # Interactive: create + setup
-drift wt create <branch>          # Create worktree with full setup
-drift wt create <branch> --open   # Create, setup, and open in VS Code
+drift wt list                        # List all worktrees
+drift wt create                      # Interactive: create + setup
+drift wt create <branch>             # Create worktree with full setup
+drift wt create <branch> --open      # Create, setup, and open in VS Code
 drift wt create <branch> --no-setup  # Just create (no file copying/env setup)
-drift wt open [branch]            # Open worktree in VS Code
-drift wt delete [branch]          # Delete a worktree
-drift wt path <branch>            # Print worktree path
-drift wt prune                    # Clean stale entries
+drift wt open [branch]               # Open worktree in VS Code
+drift wt delete [branch]             # Delete a worktree
+drift wt path <branch>               # Print worktree path
+drift wt prune                       # Clean stale entries
 ```
+
+The `create` command automatically copies configured files (`.env`, `.p8` keys) and generates environment config.
 
 ### Deployment (`drift deploy`)
 
@@ -157,46 +173,45 @@ drift doctor               # Check all dependencies
 
 ## Configuration
 
-Create a `.drift.yaml` in your project root:
+Create a `.drift.yaml` in your project root (or run `drift init`):
 
 ```yaml
 project:
-  name: my-ios-app
-  type: ios
+  name: my-app
+  type: ios  # or "web" for web projects
 
 supabase:
+  project_ref: abcdefghij      # Supabase project reference
+  project_name: my-project     # Display name
   functions_dir: supabase/functions
   migrations_dir: supabase/migrations
   protected_branches:
     - main
     - master
+  override_branch: v2/migration  # Optional: force specific Supabase branch
 
-apns:
+apns:  # iOS/macOS only
   team_id: "XXXXXXXXXX"
   bundle_id: "com.example.myapp"
   key_pattern: "AuthKey_*.p8"
   environment: development
 
-xcode:
-  xcconfig_output: Config.xcconfig
+xcode:  # iOS/macOS only
+  xcconfig_path: Config.xcconfig
   version_file: Version.xcconfig
 
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
-  direct_port: 5432
 
 backup:
-  provider: supabase
   bucket: database-backups
-  retention_days: 30
 
 worktree:
   naming_pattern: "{project}-{branch}"
   copy_on_create:
     - .env
     - "*.p8"
-  auto_setup_xcconfig: true
 ```
 
 ## Environment Variables

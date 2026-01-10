@@ -2,6 +2,25 @@
 
 All notable changes to Drift are documented here.
 
+## [0.3.0] - 2025-01-10
+
+### Added
+- **Interactive worktree creation** - `drift worktree create` without arguments now prompts for branch name and base branch
+- **`--copy-env` flag** - Interactive picker to copy custom variables from another worktree's config file
+- **`--scheme` flag** - Specify Xcode scheme for buildServer.json generation (`drift env setup --build-server --scheme "MyApp"`)
+- **`--open` flag** - Open worktree in VS Code after creation (`drift worktree create feat/x --open`)
+- **Auto-link Supabase** - `drift env setup` now automatically links Supabase if not already linked
+- Web project support for `.env.local` generation
+
+### Changed
+- **Consolidated worktree commands** - `drift worktree create` now does full setup by default (previously required `ready`)
+- **Removed `drift worktree ready`** - Use `drift worktree create` instead (add `--no-setup` for bare worktree)
+- Improved error messages when Supabase CLI is not available or not authenticated
+
+### Fixed
+- Silent error bug where failed commands showed no output
+- Fixed environment variable copying to work for both web (`.env.local`) and iOS/macOS (`Config.xcconfig`) projects
+
 ## [0.2.1] - 2024-01-15
 
 ### Added

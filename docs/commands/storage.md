@@ -105,7 +105,7 @@ The setup creates the following RLS policies on `storage.objects`:
 
 ## Bucket Configuration
 
-The bucket name can be configured in `drift.yaml`:
+The bucket name can be configured in `.drift.yaml`:
 
 ```yaml
 backup:

@@ -164,9 +164,17 @@ This generates `buildServer.json` for LSP support:
 }
 ```
 
+### Specifying a Scheme
+
+By default, the scheme is auto-detected based on the current environment. Use `--scheme` to specify exactly which scheme to use:
+
+```bash
+drift env setup --build-server --scheme "MyApp (Development)"
+```
+
 ## Multiple Schemes
 
-Configure environment-specific schemes in `drift.yaml`:
+Configure environment-specific schemes in `.drift.yaml`:
 
 ```yaml
 xcode:

@@ -21,7 +21,7 @@ drift/
 │   │   ├── storage.go       # drift storage
 │   │   └── version.go       # drift version
 │   ├── config/              # Configuration management
-│   │   └── config.go        # drift.yaml parsing
+│   │   └── config.go        # .drift.yaml parsing
 │   ├── git/                 # Git operations
 │   │   ├── git.go           # Core git functions
 │   │   ├── branch.go        # Branch operations
@@ -75,7 +75,7 @@ type Config struct {
 }
 ```
 
-Loads from `drift.yaml` with sensible defaults.
+Loads from `.drift.yaml` with sensible defaults.
 
 ### internal/git
 

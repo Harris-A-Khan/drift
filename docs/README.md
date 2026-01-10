@@ -6,11 +6,12 @@ Drift automates environment management, edge function deployment, database backu
 
 ## Features
 
-- **Environment Management** - Auto-detect git branches and generate Xcode configuration
+- **Environment Management** - Auto-detect git branches and generate configuration files (`Config.xcconfig` for iOS/macOS, `.env.local` for web)
 - **Edge Function Deployment** - Deploy functions with environment-aware secrets
 - **Database Backups** - Backup and restore with Supabase Storage integration
-- **Git Worktrees** - Manage parallel development environments
+- **Git Worktrees** - Manage parallel development environments with full setup
 - **Branch Sync** - Keep Supabase branches in sync with git branches
+- **Configuration Override** - Force use of a specific Supabase branch regardless of git branch
 
 ## Quick Example
 
@@ -18,14 +19,14 @@ Drift automates environment management, edge function deployment, database backu
 # Initialize drift in your project
 drift init
 
-# Generate xcconfig for current branch
+# Generate config for current branch
 drift env setup
 
 # Deploy edge functions
 drift deploy functions
 
-# Create a new worktree for a feature
-drift worktree create feature/new-ui
+# Create a new worktree for a feature (with full setup)
+drift worktree create feat/new-ui --open
 ```
 
 ## Installation

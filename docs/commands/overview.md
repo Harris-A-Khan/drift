@@ -13,6 +13,7 @@ drift <command> [subcommand] [flags]
 | Command | Description |
 |---------|-------------|
 | `init` | Initialize drift in a project |
+| `config` | View and modify drift configuration |
 | `env` | Environment and xcconfig management |
 | `deploy` | Edge function deployment |
 | `branch` | Supabase branch management |
