@@ -11,27 +11,29 @@ import (
 
 // DumpOptions holds options for database dump.
 type DumpOptions struct {
-	Host       string
-	Port       int
-	Database   string
-	User       string
-	Password   string
-	OutputFile string
-	Format     string // "custom", "plain", "directory", "tar"
-	SchemaOnly bool
-	DataOnly   bool
-	NoOwner    bool
-	CleanFirst bool
+	Host         string
+	Port         int
+	Database     string
+	User         string
+	Password     string
+	OutputFile   string
+	Format       string // "custom", "plain", "directory", "tar"
+	SchemaOnly   bool
+	DataOnly     bool
+	NoOwner      bool
+	NoPrivileges bool
+	CleanFirst   bool
 }
 
 // DefaultDumpOptions returns default dump options.
 func DefaultDumpOptions() DumpOptions {
 	return DumpOptions{
-		Database: "postgres",
-		User:     "postgres",
-		Port:     5432,
-		Format:   "custom",
-		NoOwner:  true,
+		Database:     "postgres",
+		User:         "postgres",
+		Port:         5432,
+		Format:       "custom",
+		NoOwner:      true,
+		NoPrivileges: true,
 	}
 }
 
@@ -70,6 +72,10 @@ func Dump(opts DumpOptions) error {
 
 	if opts.NoOwner {
 		args = append(args, "-O")
+	}
+
+	if opts.NoPrivileges {
+		args = append(args, "-x")
 	}
 
 	if opts.CleanFirst {

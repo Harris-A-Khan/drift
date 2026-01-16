@@ -164,12 +164,15 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not determine project ref for %s", env)
 	}
 
-	// Build host from project ref
-	host := fmt.Sprintf("db.%s.supabase.co", projectRef)
+	// Use pooler connection for pg_dump (direct connections are IPv6 only and often unreachable)
+	// Session mode (port 5432) is required for pg_dump
+	poolerHost := cfg.Database.PoolerHost
+	poolerPort := 5432 // Session mode, not transaction mode (6543)
+	poolerUser := fmt.Sprintf("postgres.%s", projectRef)
 
 	ui.KeyValue("Environment", envColorString(envName))
 	ui.KeyValue("Project Ref", ui.Cyan(projectRef))
-	ui.KeyValue("Host", host)
+	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
 	// Confirm for production
 	if isProd && !IsYes() {
@@ -182,10 +185,11 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Set up dump options
+	// Set up dump options using pooler connection
 	opts := database.DefaultDumpOptions()
-	opts.Host = host
-	opts.Port = cfg.Database.DirectPort
+	opts.Host = poolerHost
+	opts.Port = poolerPort
+	opts.User = poolerUser
 	opts.Password = password
 
 	if dbOutputFlag != "" {
@@ -305,12 +309,16 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	host := fmt.Sprintf("db.%s.supabase.co", targetProjectRef)
+	// Use pooler connection for pg_restore (direct connections are IPv6 only and often unreachable)
+	// Session mode (port 5432) is required for pg_restore
+	poolerHost := cfg.Database.PoolerHost
+	poolerPort := 5432 // Session mode, not transaction mode (6543)
+	poolerUser := fmt.Sprintf("postgres.%s", targetProjectRef)
 
 	ui.KeyValue("Source", sourceFile)
 	ui.KeyValue("Target", envColorString(targetEnv))
 	ui.KeyValue("Project Ref", ui.Cyan(targetProjectRef))
-	ui.KeyValue("Host", host)
+	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
 	// Confirm
 	if !IsYes() {
@@ -325,10 +333,11 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 
-	// Set up restore options
+	// Set up restore options using pooler connection
 	opts := database.DefaultRestoreOptions()
-	opts.Host = host
-	opts.Port = cfg.Database.DirectPort
+	opts.Host = poolerHost
+	opts.Port = poolerPort
+	opts.User = poolerUser
 	opts.Password = password
 	opts.InputFile = sourceFile
 
