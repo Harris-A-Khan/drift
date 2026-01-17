@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -586,8 +587,20 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 
 	ui.Header("Generate Seed Data")
 
-	// Determine source
+	// Interactive source selection if not specified via flag
 	source := dbSeedSource
+	if !cmd.Flags().Changed("source") {
+		options := []string{
+			"prod - Production database",
+			"dev - Development database",
+		}
+		selected, err := ui.PromptSelect("Select source database", options)
+		if err != nil {
+			return err
+		}
+		source = strings.Split(selected, " ")[0]
+	}
+
 	if source != "prod" && source != "production" && source != "dev" && source != "development" {
 		return fmt.Errorf("invalid source: %s (use prod or dev)", source)
 	}
@@ -598,6 +611,7 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 		sourceName = "Production"
 	}
 
+	ui.NewLine()
 	ui.KeyValue("Source", envColorString(sourceName))
 
 	// Get branch info
@@ -627,14 +641,11 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	// Get password - for non-production, API has the real password
 	var password string
 	if !isProd && connInfo != nil && connInfo.PostgresURL != "" {
-		// Non-production: API returns actual password
 		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
 	}
-	// Fallback to env vars (required for production, optional for others)
 	if password == "" {
 		password = getDbPassword(source)
 	}
-	// Last resort: prompt
 	if password == "" {
 		password, err = ui.PromptPassword("Database password")
 		if err != nil {
@@ -653,6 +664,45 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	poolerPort := 5432
 	poolerUser := fmt.Sprintf("postgres.%s", projectRef)
 
+	// Query for public tables if not specified via flag
+	var selectedTables []string
+	if !cmd.Flags().Changed("tables") {
+		ui.NewLine()
+		sp := ui.NewSpinner("Fetching public tables")
+		sp.Start()
+
+		publicTables, err := getPublicTables(poolerHost, poolerPort, poolerUser, password)
+		sp.Stop()
+
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Could not fetch tables: %v", err))
+			ui.Info("Using default: profiles")
+			selectedTables = []string{"profiles"}
+		} else if len(publicTables) == 0 {
+			ui.Info("No public tables found")
+		} else {
+			ui.NewLine()
+			ui.Info("auth.users will always be included for user authentication")
+			ui.NewLine()
+
+			// Show multi-select for public tables
+			selected, err := ui.PromptMultiSelect("Select public tables to include", publicTables, []string{"profiles"})
+			if err != nil {
+				return err
+			}
+			selectedTables = selected
+		}
+	} else {
+		// Parse from flag
+		for _, t := range strings.Split(dbSeedTables, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				selectedTables = append(selectedTables, t)
+			}
+		}
+	}
+
+	ui.NewLine()
 	ui.KeyValue("Project Ref", ui.Cyan(projectRef))
 	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
@@ -661,11 +711,30 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	outputPath = filepath.Clean(outputPath)
 
 	ui.KeyValue("Output", outputPath)
+
+	// Build tables to dump (always include auth.users)
+	tables := []string{"auth.users"}
+	for _, t := range selectedTables {
+		if !strings.Contains(t, ".") {
+			t = "public." + t
+		}
+		tables = append(tables, t)
+	}
+
+	ui.NewLine()
+	ui.Info(fmt.Sprintf("Tables to seed: %s", strings.Join(tables, ", ")))
 	ui.NewLine()
 
-	// Dump auth.users and public tables using pg_dump
-	sp := ui.NewSpinner("Generating seed.sql")
-	sp.Start()
+	// Confirm
+	if !IsYes() {
+		confirmed, err := ui.PromptYesNo("Generate seed.sql with these tables?", true)
+		if err != nil || !confirmed {
+			ui.Info("Cancelled")
+			return nil
+		}
+	}
+
+	ui.NewLine()
 
 	// Build pg_dump args for seed data
 	opts := database.DumpOptions{
@@ -675,30 +744,15 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 		Password:     password,
 		Database:     "postgres",
 		OutputFile:   outputPath,
-		Format:       "plain", // SQL format for seed
+		Format:       "plain",
 		DataOnly:     true,
 		NoOwner:      true,
 		NoPrivileges: true,
 	}
 
-	// Build tables to dump
-	tables := []string{"auth.users"}
-	if dbSeedTables != "" {
-		for _, t := range strings.Split(dbSeedTables, ",") {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				if !strings.Contains(t, ".") {
-					t = "public." + t
-				}
-				tables = append(tables, t)
-			}
-		}
-	} else {
-		// Default: also dump profiles if it exists
-		tables = append(tables, "public.profiles")
-	}
+	sp := ui.NewSpinner("Generating seed.sql")
+	sp.Start()
 
-	// Use pg_dump with specific tables
 	if err := dumpTablesToSeed(opts, tables); err != nil {
 		sp.Fail("Failed to generate seed")
 		return err
@@ -717,6 +771,43 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	ui.Info("New Supabase branches will be seeded with this data")
 
 	return nil
+}
+
+// getPublicTables queries the database for all tables in the public schema.
+func getPublicTables(host string, port int, user, password string) ([]string, error) {
+	psql, err := exec.LookPath("psql")
+	if err != nil {
+		return nil, fmt.Errorf("psql not found: %w", err)
+	}
+
+	query := `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;`
+
+	args := []string{
+		"-h", host,
+		"-p", fmt.Sprintf("%d", port),
+		"-U", user,
+		"-d", "postgres",
+		"-t", "-A", "-c", query,
+	}
+
+	env := map[string]string{
+		"PGPASSWORD": password,
+	}
+
+	result, err := shell.RunWithEnv(env, psql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+
+	var tables []string
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			tables = append(tables, line)
+		}
+	}
+
+	return tables, nil
 }
 
 // dumpTablesToSeed dumps specific tables to a seed file

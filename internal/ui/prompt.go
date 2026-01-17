@@ -105,3 +105,65 @@ func PromptSelectDetailed(label string, items []SelectItem) (int, error) {
 	return idx, err
 }
 
+// PromptMultiSelect allows selecting multiple items from a list.
+// Returns the selected items. Uses a toggle-based approach where
+// users can select/deselect items and press "Done" when finished.
+func PromptMultiSelect(label string, items []string, preselected []string) ([]string, error) {
+	// Track selected state
+	selected := make(map[string]bool)
+	for _, item := range preselected {
+		selected[item] = true
+	}
+
+	for {
+		// Build display items with checkboxes
+		displayItems := make([]string, len(items)+1)
+		for i, item := range items {
+			checkbox := "[ ]"
+			if selected[item] {
+				checkbox = "[✓]"
+			}
+			displayItems[i] = fmt.Sprintf("%s %s", checkbox, item)
+		}
+
+		// Count selected
+		count := 0
+		for _, v := range selected {
+			if v {
+				count++
+			}
+		}
+		displayItems[len(items)] = fmt.Sprintf("── Done (%d selected) ──", count)
+
+		prompt := promptui.Select{
+			Label: label,
+			Items: displayItems,
+			Size:  15,
+		}
+
+		idx, _, err := prompt.Run()
+		if err != nil {
+			return nil, err
+		}
+
+		// Check if "Done" was selected
+		if idx == len(items) {
+			break
+		}
+
+		// Toggle the selected item
+		item := items[idx]
+		selected[item] = !selected[item]
+	}
+
+	// Build result
+	var result []string
+	for _, item := range items {
+		if selected[item] {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
+}
+
