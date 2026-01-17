@@ -239,6 +239,7 @@ func ExtractUserFromURL(url string) string {
 
 // ExtractPasswordFromURL extracts the password from a PostgreSQL connection URL.
 // URL format: postgresql://user:password@host:port/database
+// Returns empty string if password is masked (e.g., "******" from API).
 func ExtractPasswordFromURL(url string) string {
 	// Find the password between : and @
 	// postgresql://postgres.ref:PASSWORD@host:port/database
@@ -261,7 +262,45 @@ func ExtractPasswordFromURL(url string) string {
 		return ""
 	}
 
-	return userPass[colonIdx+1:]
+	password := userPass[colonIdx+1:]
+
+	// URL-decode the password (e.g., %2A -> *)
+	if decoded, err := urlDecode(password); err == nil {
+		password = decoded
+	}
+
+	// Check if password is masked (API returns ****** for production)
+	if isMaskedPassword(password) {
+		return ""
+	}
+
+	return password
+}
+
+// urlDecode decodes a URL-encoded string.
+func urlDecode(s string) (string, error) {
+	// Simple URL decoding for common cases
+	result := strings.ReplaceAll(s, "%2A", "*")
+	result = strings.ReplaceAll(result, "%2a", "*")
+	result = strings.ReplaceAll(result, "%40", "@")
+	result = strings.ReplaceAll(result, "%3A", ":")
+	result = strings.ReplaceAll(result, "%3a", ":")
+	result = strings.ReplaceAll(result, "%2F", "/")
+	result = strings.ReplaceAll(result, "%2f", "/")
+	return result, nil
+}
+
+// isMaskedPassword checks if a password is masked (all asterisks).
+func isMaskedPassword(password string) bool {
+	if password == "" {
+		return false
+	}
+	for _, c := range password {
+		if c != '*' {
+			return false
+		}
+	}
+	return true
 }
 
 // ResolveBranch finds the Supabase branch for a git branch and returns the environment type.
