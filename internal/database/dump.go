@@ -57,6 +57,11 @@ Or run with PATH prefix:
 	return path, nil
 }
 
+// FindPGDump returns the path to pg_dump.
+func FindPGDump() (string, error) {
+	return findPGTool("pg_dump")
+}
+
 // Dump performs a database dump using pg_dump.
 func Dump(opts DumpOptions) error {
 	pgDump, err := findPGTool("pg_dump")
