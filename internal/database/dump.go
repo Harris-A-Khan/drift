@@ -106,6 +106,24 @@ func Dump(opts DumpOptions) error {
 		}
 		// Clean up any partial file
 		os.Remove(opts.OutputFile)
+
+		// Check for specific error types
+		stderrLower := strings.ToLower(errMsg)
+		if strings.Contains(stderrLower, "password authentication failed") ||
+			strings.Contains(stderrLower, "authentication failed") {
+			return fmt.Errorf("authentication failed - incorrect password\n\nCheck your database password and try again")
+		}
+		if strings.Contains(stderrLower, "could not connect") ||
+			strings.Contains(stderrLower, "connection refused") {
+			return fmt.Errorf("could not connect to database\n\nCheck:\n  1. Host is correct: %s:%d\n  2. Your network can reach the pooler\n  3. Supabase project is active", opts.Host, opts.Port)
+		}
+		if strings.Contains(stderrLower, "timeout") {
+			return fmt.Errorf("connection timed out\n\nThe database server at %s:%d is not responding", opts.Host, opts.Port)
+		}
+		if strings.Contains(stderrLower, "version mismatch") || strings.Contains(stderrLower, "aborting") {
+			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump version must match the server (PostgreSQL 17).\nInstall with: brew install postgresql@17", errMsg)
+		}
+
 		return fmt.Errorf("pg_dump failed: %s", errMsg)
 	}
 
