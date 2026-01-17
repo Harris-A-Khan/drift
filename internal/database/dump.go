@@ -76,6 +76,11 @@ func Dump(opts DumpOptions) error {
 		"-d", opts.Database,
 		"-F", opts.Format[0:1], // c, p, d, or t
 		"-f", opts.OutputFile,
+		// Include key schemas explicitly to ensure migration history is captured
+		"-n", "public",
+		"-n", "auth",
+		"-n", "storage",
+		"-n", "supabase_migrations", // Critical: tracks which migrations are applied
 	}
 
 	if opts.SchemaOnly {
