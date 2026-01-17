@@ -176,7 +176,7 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 	gitBranch := branch.GitBranch
 
 	// Get connection info using experimental API (includes correct pooler host)
-	connInfo, err := client.GetBranchConnectionInfo(gitBranch, projectRef)
+	connInfo, err := client.GetBranchConnectionInfo(gitBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
 	}
@@ -458,7 +458,7 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 	ui.Header(fmt.Sprintf("Database Push - %s", targetEnv))
 
 	// Get connection info using experimental API (includes correct pooler host)
-	connInfo, err := client.GetBranchConnectionInfo(targetGitBranch, targetProjectRef)
+	connInfo, err := client.GetBranchConnectionInfo(targetGitBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
 	}
@@ -619,7 +619,7 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	gitBranch := branch.GitBranch
 
 	// Get connection info
-	connInfo, err := client.GetBranchConnectionInfo(gitBranch, projectRef)
+	connInfo, err := client.GetBranchConnectionInfo(gitBranch)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
 	}

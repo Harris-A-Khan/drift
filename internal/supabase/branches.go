@@ -109,11 +109,10 @@ func (c *Client) GetBranchSecrets(branchName string) (*BranchSecrets, error) {
 
 // GetBranchConnectionInfo retrieves connection info using the experimental API.
 // This returns the full pooler URL including the correct regional host.
-func (c *Client) GetBranchConnectionInfo(branchName, projectRef string) (*BranchConnectionInfo, error) {
+// Relies on supabase link - does not pass --project-ref to avoid confusion
+// between main project ref and branch database ref.
+func (c *Client) GetBranchConnectionInfo(branchName string) (*BranchConnectionInfo, error) {
 	args := []string{"branches", "get", branchName, "--experimental", "--output", "env"}
-	if projectRef != "" {
-		args = append(args, "--project-ref", projectRef)
-	}
 
 	result, err := shell.Run("supabase", args...)
 	if err != nil {
