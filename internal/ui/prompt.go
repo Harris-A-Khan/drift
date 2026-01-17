@@ -108,6 +108,7 @@ func PromptSelectDetailed(label string, items []SelectItem) (int, error) {
 // PromptMultiSelect allows selecting multiple items from a list.
 // Returns the selected items. Uses a toggle-based approach where
 // users can select/deselect items and press "Done" when finished.
+// Features: search filtering, select all, deselect all, cursor position preserved.
 func PromptMultiSelect(label string, items []string, preselected []string) ([]string, error) {
 	// Track selected state
 	selected := make(map[string]bool)
@@ -115,17 +116,9 @@ func PromptMultiSelect(label string, items []string, preselected []string) ([]st
 		selected[item] = true
 	}
 
-	for {
-		// Build display items with checkboxes
-		displayItems := make([]string, len(items)+1)
-		for i, item := range items {
-			checkbox := "[ ]"
-			if selected[item] {
-				checkbox = "[✓]"
-			}
-			displayItems[i] = fmt.Sprintf("%s %s", checkbox, item)
-		}
+	cursorPos := 3 // Start at first item (after actions)
 
+	for {
 		// Count selected
 		count := 0
 		for _, v := range selected {
@@ -133,12 +126,38 @@ func PromptMultiSelect(label string, items []string, preselected []string) ([]st
 				count++
 			}
 		}
-		displayItems[len(items)] = fmt.Sprintf("── Done (%d selected) ──", count)
+
+		// Build display items: actions first, then items with checkboxes
+		displayItems := make([]string, len(items)+3)
+		displayItems[0] = fmt.Sprintf("   ✓ Select All (%d tables)", len(items))
+		displayItems[1] = "   ✗ Deselect All"
+		displayItems[2] = fmt.Sprintf("   ✔ Done (%d selected)", count)
+
+		for i, item := range items {
+			checkbox := "[ ]"
+			if selected[item] {
+				checkbox = "[✓]"
+			}
+			displayItems[i+3] = fmt.Sprintf("%s %s", checkbox, item)
+		}
+
+		// Search function - searches the item name (strips checkbox)
+		searcher := func(input string, index int) bool {
+			// Always show action items when not searching
+			if index < 3 {
+				return strings.Contains(strings.ToLower(displayItems[index]), strings.ToLower(input))
+			}
+			item := items[index-3]
+			return strings.Contains(strings.ToLower(item), strings.ToLower(input))
+		}
 
 		prompt := promptui.Select{
-			Label: label,
-			Items: displayItems,
-			Size:  15,
+			Label:             label + " (↑↓ navigate, type to search)",
+			Items:             displayItems,
+			Size:              18,
+			CursorPos:         cursorPos,
+			Searcher:          searcher,
+			StartInSearchMode: false,
 		}
 
 		idx, _, err := prompt.Run()
@@ -146,24 +165,36 @@ func PromptMultiSelect(label string, items []string, preselected []string) ([]st
 			return nil, err
 		}
 
-		// Check if "Done" was selected
-		if idx == len(items) {
-			break
+		// Handle actions
+		switch idx {
+		case 0: // Select All
+			for _, item := range items {
+				selected[item] = true
+			}
+			cursorPos = 2 // Move to Done
+		case 1: // Deselect All
+			for _, item := range items {
+				selected[item] = false
+			}
+			cursorPos = 0 // Move to Select All
+		case 2: // Done
+			// Build result preserving original order
+			var result []string
+			for _, item := range items {
+				if selected[item] {
+					result = append(result, item)
+				}
+			}
+			return result, nil
+		default:
+			// Toggle the selected item
+			itemIdx := idx - 3
+			if itemIdx >= 0 && itemIdx < len(items) {
+				item := items[itemIdx]
+				selected[item] = !selected[item]
+			}
+			cursorPos = idx // Stay at same position
 		}
-
-		// Toggle the selected item
-		item := items[idx]
-		selected[item] = !selected[item]
 	}
-
-	// Build result
-	var result []string
-	for _, item := range items {
-		if selected[item] {
-			result = append(result, item)
-		}
-	}
-
-	return result, nil
 }
 
