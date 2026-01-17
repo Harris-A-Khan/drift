@@ -117,7 +117,7 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	env := args[0]
-	cfg := config.LoadOrDefault()
+	_ = config.LoadOrDefault() // Load config for consistency
 
 	// Validate environment
 	if env != "prod" && env != "production" && env != "dev" && env != "development" {
@@ -132,42 +132,56 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 
 	ui.Header(fmt.Sprintf("Database Dump - %s", envName))
 
-	// Get password
+	// Get branch info from Supabase
+	client := supabase.NewClient()
+	var branch *supabase.Branch
+	var err error
+
+	if isProd {
+		branch, err = client.GetProductionBranch()
+	} else {
+		branch, err = client.GetDevelopmentBranch()
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to get %s branch: %w", envName, err)
+	}
+
+	projectRef := branch.ProjectRef
+	gitBranch := branch.GitBranch
+
+	// Get connection info using experimental API (includes correct pooler host)
+	connInfo, err := client.GetBranchConnectionInfo(gitBranch, projectRef)
+	if err != nil {
+		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
+		ui.Info("Falling back to manual password entry")
+	}
+
+	// Get password - prefer from env vars, then API, then prompt
 	password := getDbPassword(env)
+	if password == "" && connInfo != nil && connInfo.PostgresURL != "" {
+		// Extract password from POSTGRES_URL if available (preview branches only)
+		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
+	}
 	if password == "" {
-		var err error
 		password, err = ui.PromptPassword("Database password")
 		if err != nil {
 			return err
 		}
 	}
 
-	// Get project ref for host
-	projectRef := getProjectRef(env)
-	if projectRef == "" {
-		// Try to get from Supabase
-		client := supabase.NewClient()
-		if isProd {
-			branch, err := client.GetProductionBranch()
-			if err == nil {
-				projectRef = branch.ProjectRef
-			}
-		} else {
-			branch, err := client.GetDevelopmentBranch()
-			if err == nil {
-				projectRef = branch.ProjectRef
-			}
-		}
+	// Determine pooler host - prefer from API, fallback to config
+	var poolerHost string
+	if connInfo != nil && connInfo.PoolerHost != "" {
+		poolerHost = connInfo.PoolerHost
+	} else {
+		// Fallback to config (shouldn't happen if API works)
+		cfg := config.LoadOrDefault()
+		poolerHost = cfg.Database.PoolerHost
 	}
 
-	if projectRef == "" {
-		return fmt.Errorf("could not determine project ref for %s", env)
-	}
-
-	// Use pooler connection for pg_dump (direct connections are IPv6 only and often unreachable)
-	// Session mode (port 5432) is required for pg_dump
-	poolerHost := cfg.Database.PoolerHost
-	poolerPort := 5432 // Session mode, not transaction mode (6543)
+	// Use session mode (port 5432) for pg_dump
+	poolerPort := 5432
 	poolerUser := fmt.Sprintf("postgres.%s", projectRef)
 
 	ui.KeyValue("Environment", envColorString(envName))
@@ -229,18 +243,25 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	target := args[0]
-	cfg := config.LoadOrDefault()
 
 	// Validate target
 	var sourceFile string
 	var targetEnv string
-	var targetProjectRef string
+	var targetBranch *supabase.Branch
+	var targetGitBranch string
+
+	client := supabase.NewClient()
 
 	switch target {
 	case "dev", "development":
 		sourceFile = "prod.backup"
 		targetEnv = "Development"
-		targetProjectRef = getProjectRef("dev")
+		branch, err := client.GetDevelopmentBranch()
+		if err != nil {
+			return fmt.Errorf("failed to get development branch: %w", err)
+		}
+		targetBranch = branch
+		targetGitBranch = branch.GitBranch
 	case "feature":
 		sourceFile = "dev.backup"
 		targetEnv = "Feature"
@@ -249,7 +270,6 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		client := supabase.NewClient()
 		branch, _, err := client.ResolveBranch(gitBranch)
 		if err != nil {
 			return err
@@ -257,10 +277,13 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		if branch == nil {
 			return fmt.Errorf("no Supabase branch found for '%s'", gitBranch)
 		}
-		targetProjectRef = branch.ProjectRef
+		targetBranch = branch
+		targetGitBranch = gitBranch
 	default:
 		return fmt.Errorf("invalid target: %s (use dev or feature)", target)
 	}
+
+	targetProjectRef := targetBranch.ProjectRef
 
 	// Override source file if specified
 	if dbInputFlag != "" {
@@ -294,25 +317,40 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	ui.Header(fmt.Sprintf("Database Push - %s", targetEnv))
 
-	// Get password
+	// Get connection info using experimental API (includes correct pooler host)
+	connInfo, err := client.GetBranchConnectionInfo(targetGitBranch, targetProjectRef)
+	if err != nil {
+		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
+	}
+
+	// Get password - prefer from env vars, then API, then prompt
 	password := getDbPassword(target)
-	if password == "" {
-		if target == "feature" {
-			password = getDbPassword("dev") // Feature branches use dev password
-		}
+	if password == "" && target == "feature" {
+		password = getDbPassword("dev") // Feature branches use dev password
+	}
+	if password == "" && connInfo != nil && connInfo.PostgresURL != "" {
+		// Extract password from POSTGRES_URL if available (preview branches only)
+		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
 	}
 	if password == "" {
-		var err error
 		password, err = ui.PromptPassword("Target database password")
 		if err != nil {
 			return err
 		}
 	}
 
-	// Use pooler connection for pg_restore (direct connections are IPv6 only and often unreachable)
-	// Session mode (port 5432) is required for pg_restore
-	poolerHost := cfg.Database.PoolerHost
-	poolerPort := 5432 // Session mode, not transaction mode (6543)
+	// Determine pooler host - prefer from API, fallback to config
+	var poolerHost string
+	if connInfo != nil && connInfo.PoolerHost != "" {
+		poolerHost = connInfo.PoolerHost
+	} else {
+		// Fallback to config (shouldn't happen if API works)
+		cfg := config.LoadOrDefault()
+		poolerHost = cfg.Database.PoolerHost
+	}
+
+	// Use session mode (port 5432) for pg_restore
+	poolerPort := 5432
 	poolerUser := fmt.Sprintf("postgres.%s", targetProjectRef)
 
 	ui.KeyValue("Source", sourceFile)

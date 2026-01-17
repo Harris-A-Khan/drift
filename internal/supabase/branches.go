@@ -79,6 +79,18 @@ type BranchSecrets struct {
 	SupabaseURL           string `json:"SUPABASE_URL"`
 }
 
+// BranchConnectionInfo contains parsed connection information from the experimental API.
+type BranchConnectionInfo struct {
+	PostgresURL           string // Full pooler connection URL (transaction mode, port 6543)
+	PostgresURLNonPooling string // Direct connection URL (IPv6 only)
+	PoolerHost            string // e.g., aws-1-us-east-2.pooler.supabase.com
+	PoolerPort            int    // 6543 for transaction mode, 5432 for session mode
+	ProjectRef            string // e.g., gkhvtzjajeykbashnavj
+	SupabaseURL           string // e.g., https://gkhvtzjajeykbashnavj.supabase.co
+	SupabaseAnonKey       string
+	SupabaseServiceRoleKey string
+}
+
 // GetBranchSecrets retrieves all secrets for a non-production branch.
 // This only works for preview/development branches, not production.
 func (c *Client) GetBranchSecrets(branchName string) (*BranchSecrets, error) {
@@ -93,6 +105,136 @@ func (c *Client) GetBranchSecrets(branchName string) (*BranchSecrets, error) {
 	}
 
 	return &secrets, nil
+}
+
+// GetBranchConnectionInfo retrieves connection info using the experimental API.
+// This returns the full pooler URL including the correct regional host.
+func (c *Client) GetBranchConnectionInfo(branchName, projectRef string) (*BranchConnectionInfo, error) {
+	args := []string{"branches", "get", branchName, "--experimental", "--output", "env"}
+	if projectRef != "" {
+		args = append(args, "--project-ref", projectRef)
+	}
+
+	result, err := shell.Run("supabase", args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch connection info: %w - %s", err, result.Stderr)
+	}
+
+	return ParseBranchEnvOutput(result.Stdout)
+}
+
+// ParseBranchEnvOutput parses the env output from `supabase branches get --experimental --output env`.
+func ParseBranchEnvOutput(output string) (*BranchConnectionInfo, error) {
+	info := &BranchConnectionInfo{}
+
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, "=") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := parts[0]
+		value := strings.Trim(parts[1], "\"")
+
+		switch key {
+		case "POSTGRES_URL":
+			info.PostgresURL = value
+		case "POSTGRES_URL_NON_POOLING":
+			info.PostgresURLNonPooling = value
+		case "SUPABASE_URL":
+			info.SupabaseURL = value
+		case "SUPABASE_ANON_KEY":
+			info.SupabaseAnonKey = value
+		case "SUPABASE_SERVICE_ROLE_KEY":
+			info.SupabaseServiceRoleKey = value
+		}
+	}
+
+	// Parse pooler info from POSTGRES_URL
+	if info.PostgresURL != "" {
+		host, port := ExtractHostPortFromURL(info.PostgresURL)
+		info.PoolerHost = host
+		info.PoolerPort = port
+
+		// Extract project ref from username (postgres.{ref})
+		user := ExtractUserFromURL(info.PostgresURL)
+		if strings.HasPrefix(user, "postgres.") {
+			info.ProjectRef = strings.TrimPrefix(user, "postgres.")
+		}
+	}
+
+	return info, nil
+}
+
+// ExtractHostPortFromURL extracts host and port from a PostgreSQL URL.
+// URL format: postgresql://user:password@host:port/database
+func ExtractHostPortFromURL(url string) (string, int) {
+	// Find @ symbol
+	atIdx := strings.Index(url, "@")
+	if atIdx == -1 {
+		return "", 0
+	}
+
+	rest := url[atIdx+1:] // After @
+
+	// Find / for database
+	slashIdx := strings.Index(rest, "/")
+	if slashIdx == -1 {
+		slashIdx = len(rest)
+	}
+	hostPort := rest[:slashIdx]
+
+	// Handle query params
+	if qIdx := strings.Index(hostPort, "?"); qIdx != -1 {
+		hostPort = hostPort[:qIdx]
+	}
+
+	// Split host:port
+	colonIdx := strings.LastIndex(hostPort, ":")
+	if colonIdx == -1 {
+		return hostPort, 5432 // Default port
+	}
+
+	host := hostPort[:colonIdx]
+	portStr := hostPort[colonIdx+1:]
+
+	port := 5432
+	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
+		port = 5432
+	}
+
+	return host, port
+}
+
+// ExtractUserFromURL extracts the username from a PostgreSQL URL.
+func ExtractUserFromURL(url string) string {
+	// Find ://
+	colonIdx := strings.Index(url, "://")
+	if colonIdx == -1 {
+		return ""
+	}
+	rest := url[colonIdx+3:] // Skip "://"
+
+	// Find @ symbol
+	atIdx := strings.Index(rest, "@")
+	if atIdx == -1 {
+		return ""
+	}
+	userPass := rest[:atIdx]
+
+	// Find : in user:pass
+	colonIdx = strings.Index(userPass, ":")
+	if colonIdx == -1 {
+		return userPass
+	}
+
+	return userPass[:colonIdx]
 }
 
 // ExtractPasswordFromURL extracts the password from a PostgreSQL connection URL.
