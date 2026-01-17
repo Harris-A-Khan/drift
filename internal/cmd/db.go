@@ -383,9 +383,46 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	targetProjectRef := targetBranch.ProjectRef
 
-	// Override source file if specified
+	// Override source file if specified via flag
 	if dbInputFlag != "" {
 		sourceFile = dbInputFlag
+	} else {
+		// Show interactive backup picker
+		backups, _ := filepath.Glob("*.backup")
+		if len(backups) > 1 {
+			// Build options with file info
+			options := make([]string, len(backups))
+			for i, f := range backups {
+				info, err := os.Stat(f)
+				if err != nil {
+					options[i] = f
+					continue
+				}
+				sizeMB := float64(info.Size()) / 1024 / 1024
+				age := time.Since(info.ModTime())
+				ageStr := fmt.Sprintf("%.0f min ago", age.Minutes())
+				if age >= time.Hour && age < 24*time.Hour {
+					ageStr = fmt.Sprintf("%.0f hours ago", age.Hours())
+				} else if age >= 24*time.Hour {
+					ageStr = fmt.Sprintf("%.1f days ago", age.Hours()/24)
+				}
+				// Mark the suggested default
+				marker := ""
+				if f == sourceFile {
+					marker = " (suggested)"
+				}
+				options[i] = fmt.Sprintf("%s  %.2f MB  %s%s", f, sizeMB, ageStr, marker)
+			}
+
+			ui.Header("Select Backup File")
+			selected, err := ui.PromptSelect("Use backup", options)
+			if err != nil {
+				return fmt.Errorf("backup selection cancelled: %w", err)
+			}
+
+			// Extract filename from selection (first word before spaces)
+			sourceFile = strings.Fields(selected)[0]
+		}
 	}
 
 	// Check source file exists
