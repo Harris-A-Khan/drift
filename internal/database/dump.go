@@ -3,7 +3,9 @@ package database
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/undrift/drift/pkg/shell"
@@ -102,7 +104,34 @@ func Dump(opts DumpOptions) error {
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
+		// Clean up any partial file
+		os.Remove(opts.OutputFile)
 		return fmt.Errorf("pg_dump failed: %s", errMsg)
+	}
+
+	// Check for warnings in stderr even on success (e.g., version mismatch)
+	if result.Stderr != "" {
+		stderr := strings.ToLower(result.Stderr)
+		if strings.Contains(stderr, "version mismatch") || strings.Contains(stderr, "aborting") {
+			os.Remove(opts.OutputFile)
+			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump version must match the server version (PostgreSQL 17).\nInstall with: brew install postgresql@17", result.Stderr)
+		}
+	}
+
+	// Validate output file exists and is not empty
+	info, err := os.Stat(opts.OutputFile)
+	if err != nil {
+		return fmt.Errorf("pg_dump did not create output file: %w", err)
+	}
+
+	if info.Size() == 0 {
+		os.Remove(opts.OutputFile)
+		return fmt.Errorf("pg_dump created an empty file - connection may have failed silently. Check:\n  1. Password is correct\n  2. Pooler host is reachable: %s:%d\n  3. pg_dump version matches server (PostgreSQL 17)", opts.Host, opts.Port)
+	}
+
+	// Minimum size sanity check - a valid dump should be at least 1KB
+	if info.Size() < 1024 {
+		return fmt.Errorf("pg_dump created a suspiciously small file (%d bytes) - verify connection succeeded", info.Size())
 	}
 
 	return nil
