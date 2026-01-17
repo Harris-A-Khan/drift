@@ -179,15 +179,19 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 	connInfo, err := client.GetBranchConnectionInfo(gitBranch, projectRef)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
-		ui.Info("Falling back to manual password entry")
 	}
 
-	// Get password - prefer from env vars, then API, then prompt
-	password := getDbPassword(env)
-	if password == "" && connInfo != nil && connInfo.PostgresURL != "" {
-		// Extract password from POSTGRES_URL if available (preview branches only)
+	// Get password - for non-production, API has the real password (no env var needed)
+	var password string
+	if !isProd && connInfo != nil && connInfo.PostgresURL != "" {
+		// Non-production: API returns actual password
 		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
 	}
+	// Fallback to env vars (required for production, optional for others)
+	if password == "" {
+		password = getDbPassword(env)
+	}
+	// Last resort: prompt
 	if password == "" {
 		password, err = ui.PromptPassword("Database password")
 		if err != nil {
@@ -459,19 +463,17 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
 	}
 
-	// Get password - prefer from env vars, then API, then prompt
-	// For feature branches, try dev password first
+	// Get password - for non-production, API has the real password (no need for env vars)
 	var password string
-	if targetEnv == "Development" {
-		password = getDbPassword("dev")
-	} else {
-		// Feature branches - try dev password since they inherit from dev
-		password = getDbPassword("dev")
-	}
-	if password == "" && connInfo != nil && connInfo.PostgresURL != "" {
-		// Extract password from POSTGRES_URL if available (preview branches only)
+	if connInfo != nil && connInfo.PostgresURL != "" {
+		// Non-production branches: API returns the actual password
 		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
 	}
+	// Fallback to env vars if API didn't return password
+	if password == "" {
+		password = getDbPassword("dev")
+	}
+	// Last resort: prompt
 	if password == "" {
 		password, err = ui.PromptPassword("Target database password")
 		if err != nil {
@@ -622,11 +624,17 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 		ui.Warning(fmt.Sprintf("Could not get connection info via API: %v", err))
 	}
 
-	// Get password
-	password := getDbPassword(source)
-	if password == "" && connInfo != nil {
+	// Get password - for non-production, API has the real password
+	var password string
+	if !isProd && connInfo != nil && connInfo.PostgresURL != "" {
+		// Non-production: API returns actual password
 		password = supabase.ExtractPasswordFromURL(connInfo.PostgresURL)
 	}
+	// Fallback to env vars (required for production, optional for others)
+	if password == "" {
+		password = getDbPassword(source)
+	}
+	// Last resort: prompt
 	if password == "" {
 		password, err = ui.PromptPassword("Database password")
 		if err != nil {
