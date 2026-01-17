@@ -46,6 +46,17 @@ var migrateNewCmd = &cobra.Command{
 	RunE:  runMigrateNew,
 }
 
+var migrateHistoryCmd = &cobra.Command{
+	Use:   "history [branch]",
+	Short: "Show migration history",
+	Long: `Show which migrations have been applied to a branch.
+
+Displays all migrations with their status (applied/pending) and timestamps.
+If no branch is specified, uses the current git branch.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMigrateHistory,
+}
+
 var (
 	migrateDryRunFlag bool
 	migrateForceFlag  bool
@@ -58,6 +69,7 @@ func init() {
 	migrateCmd.AddCommand(migratePushCmd)
 	migrateCmd.AddCommand(migrateStatusCmd)
 	migrateCmd.AddCommand(migrateNewCmd)
+	migrateCmd.AddCommand(migrateHistoryCmd)
 	rootCmd.AddCommand(migrateCmd)
 }
 
@@ -346,5 +358,154 @@ func runMigrateNew(cmd *cobra.Command, args []string) error {
 
 	ui.Success(fmt.Sprintf("Created migration: %s", name))
 	return nil
+}
+
+func runMigrateHistory(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+	cfg := config.LoadOrDefault()
+
+	// Determine target branch
+	targetBranch := ""
+	if len(args) > 0 {
+		targetBranch = args[0]
+	} else {
+		var err error
+		targetBranch, err = git.CurrentBranch()
+		if err != nil {
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
+	}
+
+	ui.Header("Migration History")
+
+	// Apply override from config
+	overrideBranch := cfg.Supabase.OverrideBranch
+
+	// Resolve Supabase branch
+	client := supabase.NewClient()
+	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
+	if err != nil {
+		return fmt.Errorf("could not resolve Supabase branch: %w", err)
+	}
+
+	ui.KeyValue("Git Branch", ui.Cyan(targetBranch))
+	ui.KeyValue("Environment", envColorString(string(info.Environment)))
+	ui.KeyValue("Supabase Branch", ui.Cyan(info.SupabaseBranch.Name))
+	ui.KeyValue("Project Ref", ui.Cyan(info.ProjectRef))
+
+	ui.NewLine()
+
+	// Get local migrations
+	localMigrations, err := getLocalMigrations(cfg)
+	if err != nil {
+		return fmt.Errorf("could not read local migrations: %w", err)
+	}
+
+	// Get applied migrations with timestamps
+	sp := ui.NewSpinner("Fetching migration history")
+	sp.Start()
+
+	migrationInfo, err := getMigrationDetails(info.ProjectRef)
+	sp.Stop()
+
+	if err != nil {
+		ui.Warning(fmt.Sprintf("Could not fetch remote status: %v", err))
+		// Show local only
+		ui.SubHeader("Local Migrations")
+		for _, m := range localMigrations {
+			ui.List(m)
+		}
+		return nil
+	}
+
+	// Count applied and pending
+	appliedCount := 0
+	pendingCount := 0
+	for _, m := range localMigrations {
+		name := strings.TrimSuffix(m, ".sql")
+		parts := strings.SplitN(name, "_", 2)
+		timestamp := parts[0]
+		if _, ok := migrationInfo[timestamp]; ok {
+			appliedCount++
+		} else {
+			pendingCount++
+		}
+	}
+
+	ui.Infof("Total: %d migrations (%d applied, %d pending)", len(localMigrations), appliedCount, pendingCount)
+	ui.NewLine()
+
+	// Show table header
+	fmt.Printf("  %-6s  %-20s  %-40s\n", "STATUS", "APPLIED AT", "MIGRATION")
+	fmt.Printf("  %-6s  %-20s  %-40s\n", "------", "----------", "---------")
+
+	for _, m := range localMigrations {
+		name := strings.TrimSuffix(m, ".sql")
+		parts := strings.SplitN(name, "_", 2)
+		timestamp := parts[0]
+
+		migName := m
+		if len(migName) > 50 {
+			migName = migName[:47] + "..."
+		}
+
+		if appliedAt, ok := migrationInfo[timestamp]; ok {
+			// Applied
+			fmt.Printf("  %s  %-20s  %s\n", ui.Green("✓ "), appliedAt, migName)
+		} else {
+			// Pending
+			fmt.Printf("  %s  %-20s  %s\n", ui.Yellow("○ "), "pending", migName)
+		}
+	}
+
+	ui.NewLine()
+
+	if pendingCount > 0 {
+		ui.Infof("Run 'drift migrate push' to apply %d pending migration(s)", pendingCount)
+	} else {
+		ui.Success("All migrations are applied")
+	}
+
+	return nil
+}
+
+// getMigrationDetails returns a map of migration timestamps to their applied_at times.
+func getMigrationDetails(projectRef string) (map[string]string, error) {
+	result, err := shell.Run("supabase", "migration", "list", "--project-ref", projectRef)
+	if err != nil {
+		return nil, err
+	}
+
+	details := make(map[string]string)
+
+	// Parse output - format is typically:
+	// LOCAL | REMOTE | TIME (UTC)
+	// 20240101000000 | 20240101000000 | 2024-01-01 00:00:00
+	lines := strings.Split(result.Stdout, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "-") {
+			continue
+		}
+
+		parts := strings.Split(line, "|")
+		if len(parts) >= 3 {
+			local := strings.TrimSpace(parts[0])
+			remote := strings.TrimSpace(parts[1])
+			appliedAt := strings.TrimSpace(parts[2])
+
+			if remote != "" && remote != " " && local != "" {
+				// Format the timestamp nicely
+				if len(appliedAt) > 16 {
+					appliedAt = appliedAt[:16] // Trim to "2024-01-01 00:00"
+				}
+				details[local] = appliedAt
+			}
+		}
+	}
+
+	return details, nil
 }
 
