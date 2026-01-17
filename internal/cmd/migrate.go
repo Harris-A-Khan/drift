@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -112,11 +115,53 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 		ui.Warning("Using fallback branch")
 	}
 
-	// Confirm for production
+	ui.NewLine()
+
+	// Get list of local migrations
+	localMigrations, err := getLocalMigrations(cfg)
+	if err != nil {
+		ui.Warning(fmt.Sprintf("Could not list local migrations: %v", err))
+	}
+
+	// Get list of applied migrations on remote
+	appliedMigrations, err := getAppliedMigrations(info.ProjectRef)
+	if err != nil {
+		ui.Warning(fmt.Sprintf("Could not check remote migrations: %v", err))
+		// Continue anyway - we'll show all local migrations
+	}
+
+	// Find pending migrations
+	pendingMigrations := findPendingMigrations(localMigrations, appliedMigrations)
+
+	if len(pendingMigrations) == 0 {
+		ui.Success("No pending migrations - database is up to date")
+		return nil
+	}
+
+	// Show pending migrations
+	ui.SubHeader(fmt.Sprintf("Pending Migrations (%d)", len(pendingMigrations)))
+	for _, m := range pendingMigrations {
+		ui.List(m)
+	}
+
+	ui.NewLine()
+
+	if migrateDryRunFlag {
+		ui.Info("Dry run - no changes made")
+		return nil
+	}
+
+	// Confirm for production (stricter)
 	if info.Environment == supabase.EnvProduction && !IsYes() {
-		ui.NewLine()
 		ui.Warning("You are about to push migrations to PRODUCTION!")
 		confirmed, err := ui.PromptYesNo("Are you absolutely sure?", false)
+		if err != nil || !confirmed {
+			ui.Info("Cancelled")
+			return nil
+		}
+	} else if !IsYes() {
+		// Normal confirmation for non-production
+		confirmed, err := ui.PromptYesNo(fmt.Sprintf("Push %d migration(s) to %s?", len(pendingMigrations), info.SupabaseBranch.Name), true)
 		if err != nil || !confirmed {
 			ui.Info("Cancelled")
 			return nil
@@ -124,13 +169,6 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.NewLine()
-
-	if migrateDryRunFlag {
-		ui.Info("Dry run - would push migrations to:")
-		ui.KeyValue("Branch", info.SupabaseBranch.Name)
-		ui.KeyValue("Project Ref", info.ProjectRef)
-		return nil
-	}
 
 	// Push migrations
 	sp = ui.NewSpinner("Pushing migrations")
@@ -154,9 +192,91 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.NewLine()
-	ui.Success("Migrations pushed successfully")
+	ui.Success(fmt.Sprintf("Pushed %d migration(s) successfully", len(pendingMigrations)))
 
 	return nil
+}
+
+// getLocalMigrations returns a sorted list of migration filenames from the migrations directory.
+func getLocalMigrations(cfg *config.Config) ([]string, error) {
+	migrationsDir := cfg.Supabase.MigrationsDir
+	if migrationsDir == "" {
+		migrationsDir = "supabase/migrations"
+	}
+
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not read migrations directory: %w", err)
+	}
+
+	var migrations []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".sql") {
+			migrations = append(migrations, name)
+		}
+	}
+
+	sort.Strings(migrations)
+	return migrations, nil
+}
+
+// getAppliedMigrations queries the remote database for applied migrations.
+func getAppliedMigrations(projectRef string) (map[string]bool, error) {
+	// Run supabase migration list to get applied migrations
+	result, err := shell.Run("supabase", "migration", "list", "--project-ref", projectRef)
+	if err != nil {
+		return nil, err
+	}
+
+	applied := make(map[string]bool)
+
+	// Parse output - format is typically:
+	// LOCAL | REMOTE | TIME
+	// 20240101000000 | 20240101000000 | 2024-01-01 00:00:00
+	lines := strings.Split(result.Stdout, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "-") {
+			continue
+		}
+
+		// Split by | and check if REMOTE column has a value
+		parts := strings.Split(line, "|")
+		if len(parts) >= 2 {
+			remote := strings.TrimSpace(parts[1])
+			if remote != "" && remote != " " {
+				// This migration is applied remotely
+				local := strings.TrimSpace(parts[0])
+				if local != "" {
+					applied[local] = true
+				}
+			}
+		}
+	}
+
+	return applied, nil
+}
+
+// findPendingMigrations returns migrations that exist locally but aren't applied remotely.
+func findPendingMigrations(local []string, applied map[string]bool) []string {
+	var pending []string
+
+	for _, migration := range local {
+		// Extract timestamp from filename (e.g., "20240101000000_create_users.sql" -> "20240101000000")
+		name := strings.TrimSuffix(migration, ".sql")
+		parts := strings.SplitN(name, "_", 2)
+		timestamp := parts[0]
+
+		if !applied[timestamp] {
+			pending = append(pending, migration)
+		}
+	}
+
+	return pending
 }
 
 func runMigrateStatus(cmd *cobra.Command, args []string) error {
