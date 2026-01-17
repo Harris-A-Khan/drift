@@ -681,16 +681,36 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 		} else if len(publicTables) == 0 {
 			ui.Info("No public tables found")
 		} else {
+			// Add auth.users as an option (but not selected by default due to permission issues)
+			allTables := append([]string{"auth.users (requires special permissions)"}, publicTables...)
+			defaultSelected := []string{}
+			// Pre-select profiles if it exists
+			for _, t := range publicTables {
+				if t == "profiles" {
+					defaultSelected = append(defaultSelected, t)
+					break
+				}
+			}
+
 			ui.NewLine()
-			ui.Info("auth.users will always be included for user authentication")
+			ui.Info("Select tables to include in seed.sql")
+			ui.Warning("auth.users may fail due to Supabase permissions")
 			ui.NewLine()
 
-			// Show multi-select for public tables
-			selected, err := ui.PromptMultiSelect("Select public tables to include", publicTables, []string{"profiles"})
+			// Show multi-select for tables
+			selected, err := ui.PromptMultiSelect("Select tables to seed", allTables, defaultSelected)
 			if err != nil {
 				return err
 			}
-			selectedTables = selected
+
+			// Clean up auth.users selection (remove the note)
+			for _, t := range selected {
+				if strings.HasPrefix(t, "auth.users") {
+					selectedTables = append(selectedTables, "auth.users")
+				} else {
+					selectedTables = append(selectedTables, t)
+				}
+			}
 		}
 	} else {
 		// Parse from flag
@@ -712,13 +732,16 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 
 	ui.KeyValue("Output", outputPath)
 
-	// Build tables to dump (always include auth.users)
-	tables := []string{"auth.users"}
+	// Build tables to dump
+	var tables []string
 	for _, t := range selectedTables {
-		if !strings.Contains(t, ".") {
-			t = "public." + t
+		if t == "auth.users" {
+			tables = append(tables, "auth.users")
+		} else if !strings.Contains(t, ".") {
+			tables = append(tables, "public."+t)
+		} else {
+			tables = append(tables, t)
 		}
-		tables = append(tables, t)
 	}
 
 	ui.NewLine()
