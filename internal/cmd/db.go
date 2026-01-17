@@ -227,13 +227,30 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Verify dump file is not empty
+	info, err := os.Stat(opts.OutputFile)
+	if err != nil {
+		sp.Fail("Dump failed")
+		return fmt.Errorf("could not stat output file: %w", err)
+	}
+
+	if info.Size() == 0 {
+		sp.Fail("Dump failed - empty file")
+		os.Remove(opts.OutputFile) // Clean up empty file
+		return fmt.Errorf("pg_dump produced an empty file - check your connection settings and password")
+	}
+
+	// Minimum size check (a valid dump should be at least a few KB)
+	if info.Size() < 1024 {
+		sp.Fail("Dump failed - file too small")
+		return fmt.Errorf("pg_dump produced a suspiciously small file (%d bytes) - verify the dump is valid", info.Size())
+	}
+
 	sp.Success(fmt.Sprintf("Database dumped to %s", opts.OutputFile))
 
 	// Show file size
-	if info, err := os.Stat(opts.OutputFile); err == nil {
-		sizeMB := float64(info.Size()) / 1024 / 1024
-		ui.KeyValue("File Size", fmt.Sprintf("%.2f MB", sizeMB))
-	}
+	sizeMB := float64(info.Size()) / 1024 / 1024
+	ui.KeyValue("File Size", fmt.Sprintf("%.2f MB", sizeMB))
 
 	return nil
 }

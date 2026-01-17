@@ -41,7 +41,16 @@ func DefaultDumpOptions() DumpOptions {
 func findPGTool(name string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
-		return "", fmt.Errorf("%s not found in PATH. Install PostgreSQL or add its bin directory to your PATH", name)
+		return "", fmt.Errorf(`%s not found in PATH
+
+Install PostgreSQL 17+ (Supabase uses PostgreSQL 17):
+  brew install postgresql@17
+
+Then add to your shell profile (~/.zshrc or ~/.bashrc):
+  export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+
+Or run with PATH prefix:
+  PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH" drift db dump prod`, name)
 	}
 	return path, nil
 }
