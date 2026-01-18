@@ -1,0 +1,95 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release info
+        id: release
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          curl -sL -o checksums.txt "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/checksums.txt"
+          cat checksums.txt
+
+      - name: Parse checksums
+        id: checksums
+        run: |
+          echo "darwin_amd64=$(grep 'drift-darwin-amd64' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "darwin_arm64=$(grep 'drift-darwin-arm64' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux_amd64=$(grep 'drift-linux-amd64' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux_arm64=$(grep 'drift-linux-arm64' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: Harris-A-Khan/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tap/Formula/drift.rb << 'EOF'
+          class Drift < Formula
+            desc "Opinionated CLI for Supabase-backed iOS, macOS, and web projects"
+            homepage "https://github.com/Harris-A-Khan/drift"
+            version "${{ steps.release.outputs.version_num }}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/Harris-A-Khan/drift/releases/download/${{ steps.release.outputs.version }}/drift-darwin-arm64"
+                sha256 "${{ steps.checksums.outputs.darwin_arm64 }}"
+              end
+              on_intel do
+                url "https://github.com/Harris-A-Khan/drift/releases/download/${{ steps.release.outputs.version }}/drift-darwin-amd64"
+                sha256 "${{ steps.checksums.outputs.darwin_amd64 }}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/Harris-A-Khan/drift/releases/download/${{ steps.release.outputs.version }}/drift-linux-arm64"
+                sha256 "${{ steps.checksums.outputs.linux_arm64 }}"
+              end
+              on_intel do
+                url "https://github.com/Harris-A-Khan/drift/releases/download/${{ steps.release.outputs.version }}/drift-linux-amd64"
+                sha256 "${{ steps.checksums.outputs.linux_amd64 }}"
+              end
+            end
+
+            def install
+              binary_name = "drift-darwin-arm64"
+              if OS.mac? && Hardware::CPU.intel?
+                binary_name = "drift-darwin-amd64"
+              elsif OS.linux? && Hardware::CPU.arm?
+                binary_name = "drift-linux-arm64"
+              elsif OS.linux? && Hardware::CPU.intel?
+                binary_name = "drift-linux-amd64"
+              end
+
+              bin.install binary_name => "drift"
+            end
+
+            test do
+              system "#{bin}/drift", "--version"
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/drift.rb
+          git commit -m "Update drift to ${{ steps.release.outputs.version }}"
+          git push
