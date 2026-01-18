@@ -107,15 +107,39 @@ drift wt prune                       # Clean stale entries
 
 The `create` command automatically copies configured files (`.env`, `.p8` keys) and generates environment config.
 
+### Edge Functions (`drift functions`)
+
+Manage and compare Edge Functions.
+
+```bash
+drift functions list       # Compare local vs deployed functions
+drift functions logs <fn>  # View function logs
+drift functions diff <fn>  # Compare local vs deployed code
+drift functions delete <fn> # Delete a deployed function
+drift functions serve      # Run functions locally
+drift functions new <name> # Create a new function
+```
+
+### Secrets Management (`drift secrets`)
+
+Manage Edge Function secrets.
+
+```bash
+drift secrets list         # List secrets for current branch
+drift secrets diff dev prod # Compare secrets between branches
+drift secrets copy dev     # Copy secrets from dev to current branch
+```
+
 ### Deployment (`drift deploy`)
 
-Deploy Edge Functions and manage secrets.
+Deploy Edge Functions and set environment secrets.
 
 ```bash
 drift deploy all           # Deploy functions + set secrets
 drift deploy functions     # Deploy edge functions only
-drift deploy secrets       # Set APNs secrets only
+drift deploy secrets       # Set environment secrets
 drift deploy status        # Show deployment status
+drift deploy list-secrets  # List configured secrets
 ```
 
 ### Database Operations (`drift db`)
@@ -216,17 +240,102 @@ worktree:
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `PROD_PASSWORD` | Production database password |
-| `DEV_PASSWORD` | Development database password |
-| `PROD_PROJECT_REF` | Production Supabase project ref |
-| `DEV_PROJECT_REF` | Development Supabase project ref |
-| `APNS_KEY_ID` | APNs key ID |
-| `APNS_TEAM_ID` | APNs team ID |
-| `APNS_BUNDLE_ID` | APNs bundle ID |
-| `APNS_ENVIRONMENT` | APNs environment (development/production) |
-| `DRIFT_DEBUG` | Enable debug output |
+| Variable | Description | Required For |
+|----------|-------------|--------------|
+| `SUPABASE_ACCESS_TOKEN` | Supabase access token for API access | CI/CD, secrets copy |
+| `SUPABASE_DB_PASSWORD` | Database password for migrations | migrate push/history |
+| `PROD_PASSWORD` | Production database password | db dump/push |
+| `DEV_PASSWORD` | Development database password | db dump/push |
+| `PROD_PROJECT_REF` | Production Supabase project ref | db operations |
+| `DEV_PROJECT_REF` | Development Supabase project ref | db operations |
+| `APNS_KEY_ID` | APNs key ID | deploy secrets |
+| `APNS_TEAM_ID` | APNs team ID | deploy secrets |
+| `APNS_BUNDLE_ID` | APNs bundle ID | deploy secrets |
+| `APNS_ENVIRONMENT` | APNs environment (development/production) | deploy secrets |
+| `DRIFT_DEBUG` | Enable debug output | debugging |
+
+## CI/CD Usage
+
+Drift can be used in GitHub Actions and other CI/CD pipelines.
+
+### GitHub Actions Setup
+
+1. **Get your Supabase access token** from https://supabase.com/dashboard/account/tokens
+
+2. **Add secrets to your GitHub repository** (Settings > Secrets and variables > Actions):
+   - `SUPABASE_ACCESS_TOKEN` - Your Supabase access token (required)
+   - `SUPABASE_DB_PASSWORD` - Database password (for migration commands)
+
+3. **Add drift to your workflow:**
+
+```yaml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+
+      - name: Install Drift CLI
+        run: |
+          curl -L -o drift $(curl -s https://api.github.com/repos/Harris-A-Khan/drift/releases/latest | grep "browser_download_url.*drift-linux-amd64" | cut -d '"' -f 4)
+          chmod +x drift
+          sudo mv drift /usr/local/bin/
+
+      - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: drift deploy functions -y
+
+      - name: Push Migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: drift migrate push -y
+```
+
+### Available CI/CD Commands
+
+```bash
+# Status and information (read-only)
+drift status                    # Show project status
+drift functions list            # Compare local vs deployed functions
+drift secrets list              # List configured secrets
+drift migrate history           # Show applied migrations
+
+# Deployment (requires SUPABASE_ACCESS_TOKEN)
+drift deploy functions -y       # Deploy edge functions
+drift deploy secrets -y         # Set environment secrets
+drift deploy all -y             # Full deployment
+
+# Migrations (requires SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD)
+drift migrate push -y           # Push pending migrations
+
+# Comparisons
+drift functions diff <name>     # Compare local vs deployed code
+drift secrets diff main dev     # Compare secrets between branches
+```
+
+### Pin to a Specific Version
+
+```yaml
+- name: Install Drift CLI
+  run: |
+    VERSION="v1.0.0"  # Pin to specific version
+    curl -L -o drift "https://github.com/Harris-A-Khan/drift/releases/download/${VERSION}/drift-linux-amd64"
+    chmod +x drift
+    sudo mv drift /usr/local/bin/
+```
+
+See `.github/examples/drift-deploy.yml` for a complete example workflow.
 
 ## Requirements
 

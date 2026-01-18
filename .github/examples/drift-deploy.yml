@@ -1,0 +1,79 @@
+# Example GitHub Actions workflow for using drift in your project
+# Copy this to your project's .github/workflows/ directory
+#
+# Required GitHub Secrets:
+#   SUPABASE_ACCESS_TOKEN - Your Supabase access token (get from supabase.com/dashboard/account/tokens)
+#
+# Optional GitHub Secrets:
+#   SUPABASE_DB_PASSWORD - Database password (only needed for db commands)
+
+name: Deploy with Drift
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DRIFT_VERSION: "latest"  # or pin to a specific version like "v1.0.0"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install Drift CLI
+        run: |
+          # Download the latest drift binary for Linux
+          if [ "$DRIFT_VERSION" = "latest" ]; then
+            DOWNLOAD_URL=$(curl -s https://api.github.com/repos/Harris-A-Khan/drift/releases/latest | grep "browser_download_url.*drift-linux-amd64" | cut -d '"' -f 4)
+          else
+            DOWNLOAD_URL="https://github.com/Harris-A-Khan/drift/releases/download/${DRIFT_VERSION}/drift-linux-amd64"
+          fi
+
+          curl -L -o drift "$DOWNLOAD_URL"
+          chmod +x drift
+          sudo mv drift /usr/local/bin/
+
+      - name: Verify installations
+        run: |
+          drift --version
+          supabase --version
+
+      - name: Show project status
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: drift status
+
+      - name: List functions (compare local vs deployed)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: drift functions list
+
+      - name: Deploy Edge Functions
+        if: github.ref == 'refs/heads/main'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: drift deploy functions -y
+
+      - name: Push migrations
+        if: github.ref == 'refs/heads/main'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: drift migrate push -y
+
+      - name: Verify deployment
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          drift functions list
+          drift migrate history
