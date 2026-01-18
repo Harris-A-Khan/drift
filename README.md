@@ -6,18 +6,37 @@ Opinionated development workflow CLI for Supabase-backed iOS, macOS, and web pro
 
 ## Installation
 
-### Homebrew (recommended)
+### Homebrew (recommended for macOS)
 
 ```bash
-brew install Harris-A-Khan/tap/drift
+brew tap Harris-A-Khan/tap
+brew install drift
 ```
 
-### From Source (recommended for development)
+### Quick Install Script
 
 ```bash
-git clone https://github.com/Harris-A-Khan/drift.git
-cd drift
-make install    # Installs to /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/Harris-A-Khan/drift/main/install.sh | bash
+```
+
+### Direct Download
+
+```bash
+# macOS Apple Silicon (M1/M2/M3)
+curl -L -o drift https://github.com/Harris-A-Khan/drift/releases/latest/download/drift-darwin-arm64
+chmod +x drift && sudo mv drift /usr/local/bin/
+
+# macOS Intel
+curl -L -o drift https://github.com/Harris-A-Khan/drift/releases/latest/download/drift-darwin-amd64
+chmod +x drift && sudo mv drift /usr/local/bin/
+
+# Linux x86_64
+curl -L -o drift https://github.com/Harris-A-Khan/drift/releases/latest/download/drift-linux-amd64
+chmod +x drift && sudo mv drift /usr/local/bin/
+
+# Linux ARM64
+curl -L -o drift https://github.com/Harris-A-Khan/drift/releases/latest/download/drift-linux-arm64
+chmod +x drift && sudo mv drift /usr/local/bin/
 ```
 
 ### Go Install
@@ -31,13 +50,12 @@ go install github.com/Harris-A-Khan/drift/cmd/drift@latest
 > export PATH="$PATH:$(go env GOPATH)/bin"
 > ```
 
-### Manual Build
+### From Source
 
 ```bash
 git clone https://github.com/Harris-A-Khan/drift.git
 cd drift
-make build              # Creates bin/drift
-./bin/drift --version   # Run directly, or copy to a PATH location
+make install    # Builds and installs to /usr/local/bin
 ```
 
 ## Quick Start
