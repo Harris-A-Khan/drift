@@ -533,6 +533,15 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	sp.Success("Database restored successfully")
 
+	// Show next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List("drift migrate history    - Check if migrations need to be applied")
+	ui.List("drift migrate push       - Apply any pending migrations")
+	ui.List("drift deploy functions   - Deploy edge functions")
+	ui.List("drift secrets copy       - Copy secrets from dev to this branch")
+	ui.List("drift status             - Check service health")
+
 	return nil
 }
 

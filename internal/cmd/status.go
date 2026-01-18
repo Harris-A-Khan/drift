@@ -91,11 +91,26 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	ui.SubHeader("Edge Functions")
 	printFunctionsStatus(cfg)
 
+	// === SERVICE HEALTH ===
+	if info != nil {
+		ui.NewLine()
+		ui.SubHeader("Service Health")
+		printServiceHealth(info.ProjectRef)
+	}
+
 	// === WORKTREES ===
 	if statusVerboseFlag {
 		ui.NewLine()
 		ui.SubHeader("Worktrees")
 		printWorktreeStatus()
+	}
+
+	// === QUICK LINKS ===
+	if info != nil {
+		ui.NewLine()
+		ui.SubHeader("Quick Links")
+		ui.List(fmt.Sprintf("Dashboard: %s", GetProjectDashboardURL(info.ProjectRef)))
+		ui.List(fmt.Sprintf("Functions: %s", GetFunctionsURL(info.ProjectRef)))
 	}
 
 	return nil
@@ -249,6 +264,55 @@ func printFunctionsStatus(cfg *config.Config) {
 	if statusVerboseFlag && len(functions) > 0 {
 		for _, fn := range functions {
 			ui.List(fn.Name)
+		}
+	}
+}
+
+func printServiceHealth(projectRef string) {
+	// Check API health by hitting the REST endpoint
+	apiURL := fmt.Sprintf("https://%s.supabase.co/rest/v1/", projectRef)
+
+	// Try to check if API is responding (just a HEAD request would work)
+	result, err := shell.RunWithTimeout(5000, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", apiURL)
+	if err != nil {
+		ui.KeyValue("API", ui.Yellow("Could not check"))
+	} else {
+		code := strings.TrimSpace(result.Stdout)
+		if code == "200" || code == "401" { // 401 is expected without auth
+			ui.KeyValue("API", ui.Green("✓ Healthy"))
+		} else {
+			ui.KeyValue("API", ui.Red(fmt.Sprintf("✗ Status %s", code)))
+		}
+	}
+
+	// Check database via Supabase CLI
+	dbResult, err := shell.RunWithTimeout(10000, "supabase", "db", "ping", "--project-ref", projectRef)
+	if err != nil {
+		// Try alternative check
+		ui.KeyValue("Database", ui.Yellow("Could not check"))
+	} else if strings.Contains(dbResult.Stdout, "OK") || dbResult.ExitCode == 0 {
+		ui.KeyValue("Database", ui.Green("✓ Healthy"))
+	} else {
+		ui.KeyValue("Database", ui.Red("✗ Unhealthy"))
+	}
+
+	// Check functions status
+	funcResult, err := shell.Run("supabase", "functions", "list", "--project-ref", projectRef)
+	if err != nil {
+		ui.KeyValue("Functions", ui.Yellow("Could not check"))
+	} else if funcResult.ExitCode == 0 {
+		// Count deployed functions from output
+		lines := strings.Split(funcResult.Stdout, "\n")
+		deployedCount := 0
+		for _, line := range lines {
+			if strings.Contains(line, "ACTIVE") {
+				deployedCount++
+			}
+		}
+		if deployedCount > 0 {
+			ui.KeyValue("Functions", ui.Green(fmt.Sprintf("✓ %d deployed", deployedCount)))
+		} else {
+			ui.KeyValue("Functions", ui.Dim("No functions deployed"))
 		}
 	}
 }
