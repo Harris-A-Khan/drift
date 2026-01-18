@@ -210,3 +210,13 @@ func RunCommand(name string, args ...string) (string, error) {
 	return result.Stdout, nil
 }
 
+// GetProjectStatus returns the health status of a Supabase project using the Management API.
+// Returns values like "ACTIVE_HEALTHY", "ACTIVE_UNHEALTHY", "INACTIVE", etc.
+func (c *Client) GetProjectStatus(projectRef string) (string, error) {
+	client, err := NewManagementClient()
+	if err != nil {
+		return "", err
+	}
+	return client.GetProjectStatus(projectRef)
+}
+

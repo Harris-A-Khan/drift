@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -92,10 +93,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	printFunctionsStatus(cfg)
 
 	// === SERVICE HEALTH ===
-	if info != nil {
+	// Use the main project ref from config for health checks
+	// Branch-specific refs don't have health endpoints
+	mainProjectRef := cfg.Supabase.ProjectRef
+	if mainProjectRef != "" {
 		ui.NewLine()
 		ui.SubHeader("Service Health")
-		printServiceHealth(info.ProjectRef)
+		printServiceHealth(mainProjectRef)
 	}
 
 	// === WORKTREES ===
@@ -297,34 +301,76 @@ func printServiceHealth(projectRef string) {
 	// Check API health by hitting the REST endpoint
 	apiURL := fmt.Sprintf("https://%s.supabase.co/rest/v1/", projectRef)
 
-	// Try to check if API is responding (just a HEAD request would work)
-	result, err := shell.RunWithTimeout(5000, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", apiURL)
+	if statusVerboseFlag {
+		ui.Infof("Checking API health: %s", apiURL)
+	}
+
+	// Try to check if API is responding with curl's built-in timeout
+	// Use --connect-timeout for connection phase and --max-time for total time
+	result, err := shell.RunWithTimeout(15*time.Second, "curl", "-s", "-o", "/dev/null",
+		"--connect-timeout", "5", "--max-time", "10",
+		"-w", "%{http_code}", apiURL)
 	if err != nil {
 		ui.KeyValue("API", ui.Yellow("Could not check"))
+		if statusVerboseFlag {
+			ui.Infof("  Error: %v", err)
+		}
 	} else {
 		code := strings.TrimSpace(result.Stdout)
+		if statusVerboseFlag {
+			ui.Infof("  Response code: %s", code)
+		}
 		if code == "200" || code == "401" { // 401 is expected without auth
 			ui.KeyValue("API", ui.Green("✓ Healthy"))
+		} else if code == "000" {
+			ui.KeyValue("API", ui.Yellow("Could not connect"))
 		} else {
 			ui.KeyValue("API", ui.Red(fmt.Sprintf("✗ Status %s", code)))
 		}
 	}
 
-	// Check database via Supabase CLI
-	dbResult, err := shell.RunWithTimeout(10000, "supabase", "db", "ping", "--project-ref", projectRef)
+	// Check database via Supabase Management API (project status)
+	if statusVerboseFlag {
+		ui.Infof("Checking database status via Management API...")
+	}
+
+	client := supabase.NewClient()
+	status, err := client.GetProjectStatus(projectRef)
 	if err != nil {
-		// Try alternative check
 		ui.KeyValue("Database", ui.Yellow("Could not check"))
-	} else if strings.Contains(dbResult.Stdout, "OK") || dbResult.ExitCode == 0 {
-		ui.KeyValue("Database", ui.Green("✓ Healthy"))
+		if statusVerboseFlag {
+			ui.Infof("  Error: %v", err)
+			ui.Infof("  Hint: Ensure SUPABASE_ACCESS_TOKEN is set for API access")
+		}
 	} else {
-		ui.KeyValue("Database", ui.Red("✗ Unhealthy"))
+		if statusVerboseFlag {
+			ui.Infof("  Project status: %s", status)
+		}
+		switch strings.ToUpper(status) {
+		case "ACTIVE_HEALTHY":
+			ui.KeyValue("Database", ui.Green("✓ Healthy"))
+		case "ACTIVE_UNHEALTHY":
+			ui.KeyValue("Database", ui.Red("✗ Unhealthy"))
+		case "COMING_UP", "GOING_DOWN", "RESTORING":
+			ui.KeyValue("Database", ui.Yellow(fmt.Sprintf("⚠ %s", status)))
+		case "INACTIVE":
+			ui.KeyValue("Database", ui.Dim("Paused"))
+		default:
+			ui.KeyValue("Database", ui.Yellow(status))
+		}
 	}
 
 	// Check functions status
+	if statusVerboseFlag {
+		ui.Infof("Checking Edge Functions...")
+	}
+
 	funcResult, err := shell.Run("supabase", "functions", "list", "--project-ref", projectRef)
 	if err != nil {
 		ui.KeyValue("Functions", ui.Yellow("Could not check"))
+		if statusVerboseFlag {
+			ui.Infof("  Error: %v", err)
+		}
 	} else if funcResult.ExitCode == 0 {
 		// Count deployed functions from output
 		lines := strings.Split(funcResult.Stdout, "\n")
@@ -334,10 +380,18 @@ func printServiceHealth(projectRef string) {
 				deployedCount++
 			}
 		}
+		if statusVerboseFlag && funcResult.Stdout != "" {
+			ui.Infof("  Raw output: %s", strings.TrimSpace(funcResult.Stdout))
+		}
 		if deployedCount > 0 {
 			ui.KeyValue("Functions", ui.Green(fmt.Sprintf("✓ %d deployed", deployedCount)))
 		} else {
 			ui.KeyValue("Functions", ui.Dim("No functions deployed"))
+		}
+	} else if statusVerboseFlag {
+		ui.Infof("  Exit code: %d", funcResult.ExitCode)
+		if funcResult.Stderr != "" {
+			ui.Infof("  Stderr: %s", funcResult.Stderr)
 		}
 	}
 }
