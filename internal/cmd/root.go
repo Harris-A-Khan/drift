@@ -9,6 +9,7 @@ import (
 	"github.com/undrift/drift/internal/config"
 	"github.com/undrift/drift/internal/git"
 	"github.com/undrift/drift/internal/ui"
+	"github.com/undrift/drift/pkg/shell"
 )
 
 var (
@@ -68,6 +69,9 @@ func init() {
 func initConfig() {
 	if noColor {
 		os.Setenv("NO_COLOR", "1")
+	}
+	if verbose {
+		shell.SetVerbose(true)
 	}
 }
 

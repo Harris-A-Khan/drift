@@ -265,6 +265,12 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		ui.KeyValue("File Size", fmt.Sprintf("%.2f MB", sizeMB))
 	}
 
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List("drift db push <target>    - Push this backup to another branch")
+	ui.List("drift db list             - View all local backups")
+
 	return nil
 }
 

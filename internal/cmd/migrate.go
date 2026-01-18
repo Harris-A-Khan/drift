@@ -186,16 +186,44 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 	sp = ui.NewSpinner("Pushing migrations")
 	sp.Start()
 
-	pushArgs := []string{"db", "push", "--project-ref", info.ProjectRef}
+	// Get database URL for this branch (same method used for listing migrations)
+	dbURL, urlErr := getDbURLForProject(info.ProjectRef)
 
-	result, err := shell.Run("supabase", pushArgs...)
+	var result *shell.Result
+	if urlErr == nil && dbURL != "" {
+		// Use --db-url for direct connection (works for preview branches)
+		result, err = shell.Run("supabase", "db", "push", "--db-url", dbURL)
+	} else {
+		// Fallback to --project-ref (mainly for production)
+		result, err = shell.Run("supabase", "db", "push", "--project-ref", info.ProjectRef)
+	}
+
 	if err != nil {
 		sp.Fail("Migration push failed")
-		if result.Stderr != "" {
+		if result != nil && result.Stderr != "" {
 			ui.Error(result.Stderr)
 		}
 		return fmt.Errorf("failed to push migrations: %w", err)
 	}
+
+	// Check for actual errors in stderr (not just informational messages)
+	if result.Stderr != "" {
+		stderrLower := strings.ToLower(result.Stderr)
+		// Check for actual SQL errors or migration failures
+		if strings.Contains(stderrLower, "error:") || strings.Contains(stderrLower, "sqlstate") {
+			sp.Fail("Migration push encountered errors")
+			// Extract just the error lines from stderr
+			lines := strings.Split(result.Stderr, "\n")
+			for _, line := range lines {
+				lineLower := strings.ToLower(line)
+				if strings.Contains(lineLower, "error") || strings.Contains(lineLower, "sqlstate") || strings.Contains(lineLower, "at statement") {
+					ui.Error(strings.TrimSpace(line))
+				}
+			}
+			return fmt.Errorf("migration push failed - see errors above")
+		}
+	}
+
 	sp.Stop()
 
 	// Show output
@@ -204,7 +232,53 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.NewLine()
-	ui.Success(fmt.Sprintf("Pushed %d migration(s) successfully", len(pendingMigrations)))
+
+	// Verify migrations were actually applied
+	sp = ui.NewSpinner("Verifying migrations")
+	sp.Start()
+
+	newAppliedMigrations, verifyErr := getAppliedMigrations(info.ProjectRef)
+	sp.Stop()
+
+	if verifyErr != nil {
+		ui.Warning(fmt.Sprintf("Could not verify migrations: %v", verifyErr))
+		ui.Success(fmt.Sprintf("Pushed %d migration(s) - verify with 'drift migrate history'", len(pendingMigrations)))
+	} else {
+		// Check which migrations are now applied
+		appliedCount := 0
+		var failedMigrations []string
+
+		for _, m := range pendingMigrations {
+			name := strings.TrimSuffix(m, ".sql")
+			parts := strings.SplitN(name, "_", 2)
+			timestamp := parts[0]
+
+			if newAppliedMigrations[timestamp] {
+				appliedCount++
+			} else {
+				failedMigrations = append(failedMigrations, m)
+			}
+		}
+
+		if len(failedMigrations) > 0 {
+			ui.Warning(fmt.Sprintf("Some migrations may not have been applied:"))
+			for _, m := range failedMigrations {
+				ui.List(ui.Yellow(m))
+			}
+			ui.NewLine()
+			ui.Infof("Successfully applied: %d/%d migrations", appliedCount, len(pendingMigrations))
+			ui.Info("Run 'drift migrate history' for details or try pushing again")
+		} else {
+			ui.Success(fmt.Sprintf("All %d migration(s) applied successfully", appliedCount))
+		}
+	}
+
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List("drift migrate history     - View migration status")
+	ui.List("drift deploy functions    - Deploy edge functions")
+	ui.List("drift status              - Check overall project status")
 
 	return nil
 }
@@ -237,40 +311,71 @@ func getLocalMigrations(cfg *config.Config) ([]string, error) {
 }
 
 // getAppliedMigrations queries the remote database for applied migrations.
+// Uses getMigrationDetails internally to ensure consistent parsing.
 func getAppliedMigrations(projectRef string) (map[string]bool, error) {
-	// Run supabase migration list to get applied migrations
-	result, err := shell.Run("supabase", "migration", "list", "--project-ref", projectRef)
+	// Reuse getMigrationDetails to ensure consistent parsing
+	details, err := getMigrationDetails(projectRef)
 	if err != nil {
 		return nil, err
 	}
 
 	applied := make(map[string]bool)
-
-	// Parse output - format is typically:
-	// LOCAL | REMOTE | TIME
-	// 20240101000000 | 20240101000000 | 2024-01-01 00:00:00
-	lines := strings.Split(result.Stdout, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "-") {
-			continue
-		}
-
-		// Split by | and check if REMOTE column has a value
-		parts := strings.Split(line, "|")
-		if len(parts) >= 2 {
-			remote := strings.TrimSpace(parts[1])
-			if remote != "" && remote != " " {
-				// This migration is applied remotely
-				local := strings.TrimSpace(parts[0])
-				if local != "" {
-					applied[local] = true
-				}
-			}
-		}
+	for timestamp := range details {
+		applied[timestamp] = true
 	}
 
 	return applied, nil
+}
+
+// getDbURLForProject gets the database URL for a project ref.
+func getDbURLForProject(projectRef string) (string, error) {
+	client := supabase.NewClient()
+
+	// Find the git branch for this project ref
+	branches, err := client.GetBranches()
+	if err != nil {
+		return "", fmt.Errorf("failed to get branches: %w", err)
+	}
+
+	var gitBranch string
+	var isProduction bool
+	for _, b := range branches {
+		if b.ProjectRef == projectRef {
+			gitBranch = b.GitBranch
+			isProduction = b.IsDefault
+			break
+		}
+	}
+
+	if gitBranch == "" {
+		return "", fmt.Errorf("could not find git branch for project ref %s", projectRef)
+	}
+
+	// For production, require explicit password and build URL
+	if isProduction {
+		pw := os.Getenv("PROD_PASSWORD")
+		if pw == "" {
+			return "", fmt.Errorf("production requires PROD_PASSWORD environment variable")
+		}
+		// Build production connection URL
+		return fmt.Sprintf("postgresql://postgres.%s:%s@aws-0-us-east-1.pooler.supabase.com:6543/postgres", projectRef, pw), nil
+	}
+
+	// For non-production, get URL from experimental API
+	connInfo, err := client.GetBranchConnectionInfo(gitBranch)
+	if err != nil {
+		return "", fmt.Errorf("could not get connection info: %w", err)
+	}
+
+	if connInfo.PostgresURL == "" {
+		return "", fmt.Errorf("could not get database URL from connection info")
+	}
+
+	// Use session mode (port 5432) instead of transaction mode (port 6543)
+	// Transaction mode doesn't support prepared statements which supabase CLI uses
+	url := strings.Replace(connInfo.PostgresURL, ":6543/", ":5432/", 1)
+
+	return url, nil
 }
 
 // findPendingMigrations returns migrations that exist locally but aren't applied remotely.
@@ -320,10 +425,21 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.NewLine()
-	ui.SubHeader("Local Migrations")
+	ui.SubHeader("Migrations")
 
-	// List local migrations
-	result, err := shell.Run("supabase", "migration", "list")
+	// Get DB URL for the project
+	var result *shell.Result
+	if info != nil {
+		dbURL, urlErr := getDbURLForProject(info.ProjectRef)
+		if urlErr == nil {
+			result, err = shell.Run("supabase", "migration", "list", "--db-url", dbURL)
+		} else {
+			result, err = shell.Run("supabase", "migration", "list")
+		}
+	} else {
+		result, err = shell.Run("supabase", "migration", "list")
+	}
+
 	if err != nil {
 		ui.Warning("Could not list migrations")
 		return nil
@@ -472,10 +588,23 @@ func runMigrateHistory(cmd *cobra.Command, args []string) error {
 }
 
 // getMigrationDetails returns a map of migration timestamps to their applied_at times.
+// Uses supabase CLI with --db-url from experimental API.
 func getMigrationDetails(projectRef string) (map[string]string, error) {
-	result, err := shell.Run("supabase", "migration", "list", "--project-ref", projectRef)
+	// Get connection URL for this project
+	dbURL, err := getDbURLForProject(projectRef)
 	if err != nil {
 		return nil, err
+	}
+
+	// Run supabase migration list with --db-url
+	result, err := shell.Run("supabase", "migration", "list", "--db-url", dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list migrations: %w", err)
+	}
+
+	// Check for stderr errors even if exit code is 0
+	if result.ExitCode != 0 && result.Stderr != "" {
+		return nil, fmt.Errorf("migration list failed: %s", result.Stderr)
 	}
 
 	details := make(map[string]string)
@@ -484,9 +613,10 @@ func getMigrationDetails(projectRef string) (map[string]string, error) {
 	// LOCAL | REMOTE | TIME (UTC)
 	// 20240101000000 | 20240101000000 | 2024-01-01 00:00:00
 	lines := strings.Split(result.Stdout, "\n")
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "-") {
+		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "Local") || strings.HasPrefix(line, "-") {
 			continue
 		}
 

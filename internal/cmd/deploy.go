@@ -12,46 +12,97 @@ import (
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "Edge function deployment",
-	Long: `Deploy Edge Functions and set secrets for the current environment.
+	Short: "Deploy Edge Functions and environment secrets",
+	Long: `Deploy Edge Functions and set environment secrets for the current environment.
 
 The deploy command determines the target environment from your current
-git branch and deploys to the matching Supabase branch.`,
+git branch and deploys to the matching Supabase branch.
+
+Commands:
+  functions    - Deploy all Edge Functions
+  secrets      - Set environment secrets (APNs, debug switch, etc.)
+  all          - Deploy functions and set secrets
+  status       - Show deployment target and local functions
+  list-secrets - List configured secrets on environment`,
+	Example: `  drift deploy functions        # Deploy all functions
+  drift deploy secrets          # Set environment secrets
+  drift deploy all              # Full deployment
+  drift deploy status           # Check deployment target`,
 }
 
 var deployFunctionsCmd = &cobra.Command{
 	Use:   "functions",
-	Short: "Deploy edge functions only",
-	Long:  `Deploy all Edge Functions to the target environment.`,
-	RunE:  runDeployFunctions,
+	Short: "Deploy all Edge Functions",
+	Long: `Deploy all Edge Functions from your local project to the target environment.
+
+Functions are deployed from the supabase/functions directory (or as
+configured in .drift.yaml). Each function is deployed individually
+and progress is shown during deployment.
+
+Use --no-verify-jwt to deploy functions that don't require authentication.`,
+	Example: `  drift deploy functions             # Deploy to current branch's environment
+  drift deploy functions -b dev      # Deploy to dev environment
+  drift deploy functions --no-verify-jwt  # Skip JWT verification`,
+	RunE: runDeployFunctions,
 }
 
 var deploySecretsCmd = &cobra.Command{
 	Use:   "secrets",
-	Short: "Set APNs secrets only",
-	Long:  `Set APNs and other secrets for the target environment.`,
-	RunE:  runDeploySecrets,
+	Short: "Set environment secrets",
+	Long: `Set environment secrets for Edge Functions.
+
+This configures secrets that are available to Edge Functions at runtime:
+  - APNs credentials (for push notifications)
+  - Debug switch (enabled for non-production)
+  - Other environment-specific secrets
+
+Production environments have the debug switch disabled automatically.`,
+	Example: `  drift deploy secrets           # Set secrets for current environment
+  drift deploy secrets -b prod   # Set secrets for production`,
+	RunE: runDeploySecrets,
 }
 
 var deployAllCmd = &cobra.Command{
 	Use:   "all",
 	Short: "Deploy functions and set secrets",
-	Long:  `Deploy all Edge Functions and set all secrets for the target environment.`,
-	RunE:  runDeployAll,
+	Long: `Perform a full deployment: deploy all Edge Functions and set environment secrets.
+
+This is equivalent to running:
+  drift deploy functions
+  drift deploy secrets
+
+Confirmation is required for production deployments unless --yes is used.`,
+	Example: `  drift deploy all           # Full deployment
+  drift deploy all -y        # Skip confirmation
+  drift deploy all -b prod   # Deploy to production`,
+	RunE: runDeployAll,
 }
 
 var deployStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show deployment status",
-	Long:  `Show the current deployment status and target environment.`,
-	RunE:  runDeployStatus,
+	Long: `Show the current deployment target and list local Edge Functions.
+
+Displays:
+  - Current git branch
+  - Target Supabase environment
+  - List of local functions ready to deploy
+
+Use 'drift functions list' for a comparison of local vs deployed functions.`,
+	Example: `  drift deploy status`,
+	RunE:    runDeployStatus,
 }
 
 var deployListSecretsCmd = &cobra.Command{
 	Use:   "list-secrets",
 	Short: "List secrets on target environment",
-	Long:  `List all secrets configured on the target Supabase environment.`,
-	RunE:  runDeployListSecrets,
+	Long: `List all secrets configured on the target Supabase environment.
+
+Shows the names of all secrets (values are not displayed for security).
+Use this to verify secrets are configured before deploying functions.`,
+	Example: `  drift deploy list-secrets        # List for current environment
+  drift deploy list-secrets -b dev # List for dev environment`,
+	RunE: runDeployListSecrets,
 }
 
 var (
@@ -180,6 +231,14 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 	ui.Success(fmt.Sprintf("Successfully deployed %d functions", len(functions)))
+
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List("drift deploy secrets      - Set environment secrets")
+	ui.List("drift functions list      - Compare local vs deployed")
+	ui.List("drift functions diff      - Verify deployed code")
+	ui.List("drift secrets list        - View configured secrets")
 
 	return nil
 }

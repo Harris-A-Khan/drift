@@ -78,7 +78,7 @@ func Debugf(format string, args ...interface{}) {
 func Header(title string) {
 	width := 62
 	titleLen := len(title)
-	padding := width - titleLen - 4 // -4 for "║  " and "║"
+	padding := width - titleLen - 2 // -2 for "  " before title
 
 	if padding < 0 {
 		padding = 0

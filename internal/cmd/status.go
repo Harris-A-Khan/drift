@@ -84,7 +84,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// === MIGRATIONS ===
 	ui.NewLine()
 	ui.SubHeader("Migrations")
-	printMigrationStatus(statusVerboseFlag)
+	printMigrationStatus(statusVerboseFlag, info)
 
 	// === EDGE FUNCTIONS ===
 	ui.NewLine()
@@ -193,7 +193,7 @@ func printConfigStatus(status configFileStatus) {
 	}
 }
 
-func printMigrationStatus(verbose bool) {
+func printMigrationStatus(verbose bool, info *supabase.BranchInfo) {
 	// Check if migrations directory exists
 	migrationsPath := "supabase/migrations"
 	if _, err := os.Stat(migrationsPath); os.IsNotExist(err) {
@@ -232,12 +232,37 @@ func printMigrationStatus(verbose bool) {
 	}
 
 	// Try to get remote migration status
-	result, err := shell.Run("supabase", "migration", "list", "--output", "json")
+	if info == nil {
+		return
+	}
+
+	// Get DB URL from experimental API for non-production
+	dbURL := getDbURLForBranch(info)
+	if dbURL == "" {
+		ui.KeyValue("Remote Status", ui.Dim("Could not check (no connection)"))
+		return
+	}
+
+	result, err := shell.Run("supabase", "migration", "list", "--db-url", dbURL)
 	if err == nil && result.Stdout != "" {
-		// Parse output to check for pending
-		if strings.Contains(result.Stdout, "pending") || strings.Contains(result.Stdout, "Not applied") {
+		// Check if any migration has empty REMOTE column (pending)
+		hasPending := false
+		lines := strings.Split(result.Stdout, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "|") && !strings.HasPrefix(strings.TrimSpace(line), "Local") && !strings.HasPrefix(strings.TrimSpace(line), "-") {
+				parts := strings.Split(line, "|")
+				if len(parts) >= 2 {
+					remote := strings.TrimSpace(parts[1])
+					if remote == "" || remote == " " {
+						hasPending = true
+						break
+					}
+				}
+			}
+		}
+		if hasPending {
 			ui.KeyValue("Remote Status", ui.Yellow("Some migrations may be pending"))
-			ui.Infof("Run 'drift migrate status' for details")
+			ui.Infof("Run 'drift migrate history' for details")
 		} else {
 			ui.KeyValue("Remote Status", ui.Green("✓ Up to date"))
 		}
@@ -455,4 +480,39 @@ func ResolveFilePath(cfg *config.Config, path string) string {
 		return path
 	}
 	return filepath.Join(cfg.ProjectRoot(), path)
+}
+
+// getDbURLForBranch gets the database URL for a branch.
+// For non-production, it gets from the experimental API.
+// For production, it builds from env vars.
+func getDbURLForBranch(info *supabase.BranchInfo) string {
+	if info == nil {
+		return ""
+	}
+
+	// For production, require explicit password and build URL
+	if info.Environment == supabase.EnvProduction {
+		pw := os.Getenv("PROD_PASSWORD")
+		if pw == "" {
+			return ""
+		}
+		return fmt.Sprintf("postgresql://postgres.%s:%s@aws-0-us-east-1.pooler.supabase.com:6543/postgres", info.ProjectRef, pw)
+	}
+
+	// For non-production, try experimental API
+	client := supabase.NewClient()
+	connInfo, err := client.GetBranchConnectionInfo(info.SupabaseBranch.GitBranch)
+	if err != nil {
+		return ""
+	}
+
+	if connInfo.PostgresURL == "" {
+		return ""
+	}
+
+	// Use session mode (port 5432) instead of transaction mode (port 6543)
+	// Transaction mode doesn't support prepared statements which supabase CLI uses
+	url := strings.Replace(connInfo.PostgresURL, ":6543/", ":5432/", 1)
+
+	return url
 }

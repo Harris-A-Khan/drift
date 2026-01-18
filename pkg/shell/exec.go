@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+// verboseMode controls whether commands are logged before execution.
+var verboseMode bool
+
+// SetVerbose enables or disables verbose command logging.
+func SetVerbose(v bool) {
+	verboseMode = v
+}
+
+// IsVerbose returns whether verbose mode is enabled.
+func IsVerbose() bool {
+	return verboseMode
+}
+
 // Result holds the output and exit code of a command execution.
 type Result struct {
 	Stdout   string
@@ -54,6 +67,29 @@ func (r *DefaultRunner) RunInteractive(ctx context.Context, name string, args ..
 
 // runCmd is the internal function that executes commands.
 func runCmd(ctx context.Context, dir string, env map[string]string, interactive bool, name string, args ...string) (*Result, error) {
+	// Log command if verbose mode is enabled
+	if verboseMode {
+		cmdStr := name
+		if len(args) > 0 {
+			// Mask sensitive args like passwords in connection strings
+			maskedArgs := make([]string, len(args))
+			for i, arg := range args {
+				if strings.Contains(arg, "://") && strings.Contains(arg, "@") {
+					// Mask password in connection strings
+					maskedArgs[i] = maskConnectionString(arg)
+				} else {
+					maskedArgs[i] = arg
+				}
+			}
+			cmdStr = fmt.Sprintf("%s %s", name, strings.Join(maskedArgs, " "))
+		}
+		if dir != "" {
+			fmt.Printf("\033[90m$ cd %s && %s\033[0m\n", dir, cmdStr)
+		} else {
+			fmt.Printf("\033[90m$ %s\033[0m\n", cmdStr)
+		}
+	}
+
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, name, args...)
 
@@ -87,6 +123,20 @@ func runCmd(ctx context.Context, dir string, env map[string]string, interactive 
 		Duration: time.Since(start),
 	}
 
+	// Log result if verbose mode is enabled
+	if verboseMode && !interactive {
+		if result.Stdout != "" {
+			// Only show first few lines of output in verbose mode
+			lines := strings.Split(result.Stdout, "\n")
+			if len(lines) > 5 {
+				fmt.Printf("\033[90m→ (%d lines of output)\033[0m\n", len(lines))
+			}
+		}
+		if result.Stderr != "" && err != nil {
+			fmt.Printf("\033[91m→ %s\033[0m\n", truncateString(result.Stderr, 200))
+		}
+	}
+
 	if err == nil {
 		return result, nil
 	}
@@ -99,6 +149,35 @@ func runCmd(ctx context.Context, dir string, env map[string]string, interactive 
 
 	result.ExitCode = -1
 	return result, fmt.Errorf("failed to execute '%s': %w", name, err)
+}
+
+// maskConnectionString masks the password in a database connection string.
+func maskConnectionString(connStr string) string {
+	// Format: postgresql://user:password@host:port/db
+	// We want to mask the password part
+	if idx := strings.Index(connStr, "://"); idx != -1 {
+		prefix := connStr[:idx+3]
+		rest := connStr[idx+3:]
+
+		if atIdx := strings.Index(rest, "@"); atIdx != -1 {
+			userPart := rest[:atIdx]
+			hostPart := rest[atIdx:]
+
+			if colonIdx := strings.Index(userPart, ":"); colonIdx != -1 {
+				user := userPart[:colonIdx]
+				return prefix + user + ":****" + hostPart
+			}
+		}
+	}
+	return connStr
+}
+
+// truncateString truncates a string to maxLen characters.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // Convenience functions that use background context.

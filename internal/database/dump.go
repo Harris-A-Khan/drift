@@ -25,6 +25,7 @@ type DumpOptions struct {
 	NoOwner      bool
 	NoPrivileges bool
 	CleanFirst   bool
+	IfExists     bool
 }
 
 // DefaultDumpOptions returns default dump options.
@@ -36,6 +37,8 @@ func DefaultDumpOptions() DumpOptions {
 		Format:       "custom",
 		NoOwner:      true,
 		NoPrivileges: true,
+		CleanFirst:   true, // Include DROP statements before CREATE
+		IfExists:     true, // Use IF EXISTS with DROP statements
 	}
 }
 
@@ -98,6 +101,10 @@ func Dump(opts DumpOptions) error {
 
 	if opts.CleanFirst {
 		args = append(args, "-c")
+	}
+
+	if opts.IfExists {
+		args = append(args, "--if-exists")
 	}
 
 	// Set password via environment

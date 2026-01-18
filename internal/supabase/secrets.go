@@ -11,8 +11,8 @@ import (
 
 // Secret represents a Supabase secret.
 type Secret struct {
-	Name  string
-	Value string
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // SetSecret sets a secret on the specified project/branch.
