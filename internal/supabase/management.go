@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -325,19 +326,71 @@ type FunctionLogEntry struct {
 
 // GetFunctionLogs retrieves logs for an Edge Function via Management API.
 // Returns the last 100 log entries from the past hour.
+// Queries both function_logs (console output) and function_edge_logs (invocations).
 func (c *ManagementClient) GetFunctionLogs(projectRef, functionName string) ([]FunctionLogEntry, error) {
-	// Query the function_logs table for console output
 	// Time window: last 1 hour (API requires timestamps)
 	endTime := time.Now().UTC()
 	startTime := endTime.Add(-1 * time.Hour)
 
-	// SQL query to get function logs
-	sql := fmt.Sprintf(`SELECT timestamp, event_message, level, metadata
-FROM function_logs
-WHERE metadata->>'function_id' LIKE '%%%s%%'
-ORDER BY timestamp DESC
-LIMIT 100`, functionName)
+	var allLogs []FunctionLogEntry
 
+	// Query 1: Get console logs from function_logs table
+	// Uses CROSS JOIN UNNEST to access nested metadata fields
+	consoleLogs, err := c.queryFunctionConsoleLogs(projectRef, functionName, startTime, endTime)
+	if err == nil {
+		allLogs = append(allLogs, consoleLogs...)
+	}
+
+	// Query 2: Get invocation logs from function_edge_logs table
+	// Filter by URL pathname containing the function name
+	edgeLogs, err := c.queryFunctionEdgeLogs(projectRef, functionName, startTime, endTime)
+	if err == nil {
+		allLogs = append(allLogs, edgeLogs...)
+	}
+
+	// Sort by timestamp descending (most recent first)
+	sort.Slice(allLogs, func(i, j int) bool {
+		return allLogs[i].Timestamp > allLogs[j].Timestamp
+	})
+
+	// Limit to 100 entries
+	if len(allLogs) > 100 {
+		allLogs = allLogs[:100]
+	}
+
+	return allLogs, nil
+}
+
+// queryFunctionConsoleLogs queries the function_logs table for console.log output.
+func (c *ManagementClient) queryFunctionConsoleLogs(projectRef, functionName string, startTime, endTime time.Time) ([]FunctionLogEntry, error) {
+	// SQL query using CROSS JOIN UNNEST for nested metadata access
+	// Note: function_logs contains all functions, so we get all and filter client-side
+	// since the function name isn't directly in the logs (only function_id UUID is)
+	sql := `SELECT t.timestamp, t.event_message, m.level
+FROM function_logs t
+CROSS JOIN UNNEST(t.metadata) as m
+ORDER BY t.timestamp DESC
+LIMIT 50`
+
+	return c.executeFunctionLogsQuery(projectRef, sql, startTime, endTime)
+}
+
+// queryFunctionEdgeLogs queries the function_edge_logs table for invocation logs.
+func (c *ManagementClient) queryFunctionEdgeLogs(projectRef, functionName string, startTime, endTime time.Time) ([]FunctionLogEntry, error) {
+	// SQL query filtering by URL pathname containing the function name
+	sql := fmt.Sprintf(`SELECT t.timestamp, t.event_message, r.status_code as level
+FROM function_edge_logs t
+CROSS JOIN UNNEST(t.metadata) as m
+CROSS JOIN UNNEST(m.response) as r
+WHERE regexp_contains(t.event_message, '%s')
+ORDER BY t.timestamp DESC
+LIMIT 50`, functionName)
+
+	return c.executeFunctionLogsQuery(projectRef, sql, startTime, endTime)
+}
+
+// executeFunctionLogsQuery executes a logs query and parses the response.
+func (c *ManagementClient) executeFunctionLogsQuery(projectRef, sql string, startTime, endTime time.Time) ([]FunctionLogEntry, error) {
 	apiURL := fmt.Sprintf("%s/v1/projects/%s/analytics/endpoints/logs.all?sql=%s&iso_timestamp_start=%s&iso_timestamp_end=%s",
 		managementAPIBaseURL,
 		projectRef,
@@ -369,46 +422,45 @@ LIMIT 100`, functionName)
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Parse the response - it's an array of log entries
+	// Parse the response
 	var response struct {
 		Result []struct {
-			Timestamp    string      `json:"timestamp"`
+			Timestamp    int64       `json:"timestamp"`
 			EventMessage string      `json:"event_message"`
-			Level        string      `json:"level"`
-			Metadata     interface{} `json:"metadata"`
+			Level        interface{} `json:"level"` // Can be string or int (status code)
 		} `json:"result"`
+		Error interface{} `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
-		// Try alternate format (direct array)
-		var directResult []struct {
-			Timestamp    string      `json:"timestamp"`
-			EventMessage string      `json:"event_message"`
-			Level        string      `json:"level"`
-			Metadata     interface{} `json:"metadata"`
-		}
-		if err2 := json.Unmarshal(body, &directResult); err2 != nil {
-			return nil, fmt.Errorf("failed to parse logs response: %w (body: %s)", err, string(body))
-		}
-		// Convert to our format
-		var logs []FunctionLogEntry
-		for _, entry := range directResult {
-			logs = append(logs, FunctionLogEntry{
-				Timestamp:    entry.Timestamp,
-				EventMessage: entry.EventMessage,
-				Level:        entry.Level,
-			})
-		}
-		return logs, nil
+		return nil, fmt.Errorf("failed to parse logs response: %w", err)
+	}
+
+	if response.Error != nil {
+		return nil, fmt.Errorf("query error: %v", response.Error)
 	}
 
 	// Convert to our format
 	var logs []FunctionLogEntry
 	for _, entry := range response.Result {
+		// Convert timestamp from microseconds to RFC3339
+		ts := time.UnixMicro(entry.Timestamp).UTC().Format(time.RFC3339Nano)
+
+		// Convert level to string (could be int status code or string log level)
+		var level string
+		switch v := entry.Level.(type) {
+		case string:
+			level = v
+		case float64:
+			level = fmt.Sprintf("%d", int(v))
+		default:
+			level = "info"
+		}
+
 		logs = append(logs, FunctionLogEntry{
-			Timestamp:    entry.Timestamp,
+			Timestamp:    ts,
 			EventMessage: entry.EventMessage,
-			Level:        entry.Level,
+			Level:        level,
 		})
 	}
 
