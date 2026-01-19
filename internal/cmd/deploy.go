@@ -285,15 +285,15 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	client := supabase.NewClient()
 
 	// Load APNs secrets
-	apnsEnv := cfg.APNS.Environment
+	apnsEnv := cfg.Apple.PushEnvironment
 	if info.Environment == supabase.EnvProduction {
 		apnsEnv = "production"
 	}
 
 	apnsSecrets, err := supabase.LoadAPNSSecretsFromConfig(
-		cfg.APNS.TeamID,
-		cfg.APNS.BundleID,
-		cfg.APNS.KeyPattern,
+		cfg.Apple.TeamID,
+		cfg.Apple.BundleID,
+		cfg.Apple.PushKeyPattern,
 		apnsEnv,
 		cfg.ProjectRoot(),
 	)

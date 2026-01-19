@@ -13,12 +13,13 @@ import (
 type Config struct {
 	Project  ProjectConfig  `yaml:"project" mapstructure:"project"`
 	Supabase SupabaseConfig `yaml:"supabase" mapstructure:"supabase"`
-	APNS     APNSConfig     `yaml:"apns" mapstructure:"apns"`
+	Apple    AppleConfig    `yaml:"apple" mapstructure:"apple"`
 	Xcode    XcodeConfig    `yaml:"xcode" mapstructure:"xcode"`
 	Web      WebConfig      `yaml:"web" mapstructure:"web"`
 	Database DatabaseConfig `yaml:"database" mapstructure:"database"`
 	Backup   BackupConfig   `yaml:"backup" mapstructure:"backup"`
 	Worktree WorktreeConfig `yaml:"worktree" mapstructure:"worktree"`
+	Device   DeviceConfig   `yaml:"device" mapstructure:"device"`
 
 	// Internal: path to the config file
 	configPath string
@@ -73,12 +74,12 @@ func (c *SupabaseConfig) HasOverride() bool {
 	return c.OverrideBranch != ""
 }
 
-// APNSConfig holds Apple Push Notification configuration.
-type APNSConfig struct {
-	TeamID      string `yaml:"team_id" mapstructure:"team_id"`
-	BundleID    string `yaml:"bundle_id" mapstructure:"bundle_id"`
-	KeyPattern  string `yaml:"key_pattern" mapstructure:"key_pattern"`
-	Environment string `yaml:"environment" mapstructure:"environment"` // development, production
+// AppleConfig holds Apple Developer configuration for iOS/macOS projects.
+type AppleConfig struct {
+	TeamID          string `yaml:"team_id" mapstructure:"team_id"`
+	BundleID        string `yaml:"bundle_id" mapstructure:"bundle_id"`
+	PushKeyPattern  string `yaml:"push_key_pattern" mapstructure:"push_key_pattern"`
+	PushEnvironment string `yaml:"push_environment" mapstructure:"push_environment"` // development, production
 }
 
 // XcodeConfig holds Xcode-related configuration.
@@ -116,6 +117,24 @@ type WorktreeConfig struct {
 	NamingPattern     string   `yaml:"naming_pattern" mapstructure:"naming_pattern"`
 	CopyOnCreate      []string `yaml:"copy_on_create" mapstructure:"copy_on_create"`
 	AutoSetupXcconfig bool     `yaml:"auto_setup_xcconfig" mapstructure:"auto_setup_xcconfig"`
+}
+
+// DeviceConfig holds mobile device automation configuration.
+type DeviceConfig struct {
+	WDAPath       string        `yaml:"wda_path" mapstructure:"wda_path"`
+	WDAPort       int           `yaml:"wda_port" mapstructure:"wda_port"`
+	DefaultDevice string        `yaml:"default_device" mapstructure:"default_device"`
+	Devices       []DeviceEntry `yaml:"devices" mapstructure:"devices"`
+}
+
+// DeviceEntry represents a configured test device.
+type DeviceEntry struct {
+	Name    string `yaml:"name" mapstructure:"name"`
+	UDID    string `yaml:"udid" mapstructure:"udid"`
+	Model   string `yaml:"model" mapstructure:"model"`
+	OS      string `yaml:"os" mapstructure:"os"`
+	Primary bool   `yaml:"primary" mapstructure:"primary"`
+	Notes   string `yaml:"notes" mapstructure:"notes"`
 }
 
 // Load finds and loads .drift.yaml from current or parent directories.
@@ -231,6 +250,48 @@ func (c *Config) GetVersionFilePath() string {
 // GetEnvLocalPath returns the absolute path to the .env.local file for web projects.
 func (c *Config) GetEnvLocalPath() string {
 	return filepath.Join(c.ProjectRoot(), c.Web.EnvOutput)
+}
+
+// GetPrimaryDevice returns the primary device from the config, or the first device if no primary is set.
+func (c *Config) GetPrimaryDevice() *DeviceEntry {
+	for i, d := range c.Device.Devices {
+		if d.Primary {
+			return &c.Device.Devices[i]
+		}
+	}
+	// Fall back to default device by name
+	if c.Device.DefaultDevice != "" {
+		for i, d := range c.Device.Devices {
+			if d.Name == c.Device.DefaultDevice {
+				return &c.Device.Devices[i]
+			}
+		}
+	}
+	// Fall back to first device
+	if len(c.Device.Devices) > 0 {
+		return &c.Device.Devices[0]
+	}
+	return nil
+}
+
+// GetDeviceByUDID returns a device by its UDID.
+func (c *Config) GetDeviceByUDID(udid string) *DeviceEntry {
+	for i, d := range c.Device.Devices {
+		if d.UDID == udid {
+			return &c.Device.Devices[i]
+		}
+	}
+	return nil
+}
+
+// GetDeviceByName returns a device by its name.
+func (c *Config) GetDeviceByName(name string) *DeviceEntry {
+	for i, d := range c.Device.Devices {
+		if d.Name == name {
+			return &c.Device.Devices[i]
+		}
+	}
+	return nil
 }
 
 // Exists checks if a .drift.yaml file exists in the current or parent directories.

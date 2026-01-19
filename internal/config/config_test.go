@@ -28,12 +28,12 @@ func TestDefaultConfig_HasExpectedValues(t *testing.T) {
 		t.Errorf("DefaultConfig().Supabase.ProtectedBranches length = %d, want 2", len(cfg.Supabase.ProtectedBranches))
 	}
 
-	// APNS defaults
-	if cfg.APNS.KeyPattern != "AuthKey_*.p8" {
-		t.Errorf("DefaultConfig().APNS.KeyPattern = %q, want %q", cfg.APNS.KeyPattern, "AuthKey_*.p8")
+	// Apple defaults
+	if cfg.Apple.PushKeyPattern != "AuthKey_*.p8" {
+		t.Errorf("DefaultConfig().Apple.PushKeyPattern = %q, want %q", cfg.Apple.PushKeyPattern, "AuthKey_*.p8")
 	}
-	if cfg.APNS.Environment != "development" {
-		t.Errorf("DefaultConfig().APNS.Environment = %q, want %q", cfg.APNS.Environment, "development")
+	if cfg.Apple.PushEnvironment != "development" {
+		t.Errorf("DefaultConfig().Apple.PushEnvironment = %q, want %q", cfg.Apple.PushEnvironment, "development")
 	}
 
 	// Xcode defaults

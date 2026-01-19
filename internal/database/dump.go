@@ -29,12 +29,14 @@ type DumpOptions struct {
 }
 
 // DefaultDumpOptions returns default dump options.
+// Uses plain SQL format by default (like the original push-db-to-branch.sh script)
+// which dumps everything including auth.users and can be restored with psql -f.
 func DefaultDumpOptions() DumpOptions {
 	return DumpOptions{
 		Database:     "postgres",
 		User:         "postgres",
 		Port:         5432,
-		Format:       "custom",
+		Format:       "plain", // Plain SQL format - includes everything and works with psql -f
 		NoOwner:      true,
 		NoPrivileges: true,
 		CleanFirst:   true, // Include DROP statements before CREATE

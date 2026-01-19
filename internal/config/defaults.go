@@ -14,11 +14,11 @@ func DefaultConfig() *Config {
 			MigrationsDir:     "supabase/migrations",
 			ProtectedBranches: []string{"main", "master"},
 		},
-		APNS: APNSConfig{
-			TeamID:      "",
-			BundleID:    "",
-			KeyPattern:  "AuthKey_*.p8",
-			Environment: "development",
+		Apple: AppleConfig{
+			TeamID:          "",
+			BundleID:        "",
+			PushKeyPattern:  "AuthKey_*.p8",
+			PushEnvironment: "development",
 		},
 		Xcode: XcodeConfig{
 			XcconfigOutput: "Config.xcconfig",
@@ -47,9 +47,15 @@ func DefaultConfig() *Config {
 			RetentionDays: 30,
 		},
 		Worktree: WorktreeConfig{
-			NamingPattern:    "{project}-{branch}",
-			CopyOnCreate:     []string{".env", "*.p8"},
+			NamingPattern:     "{project}-{branch}",
+			CopyOnCreate:      []string{".env", "*.p8"},
 			AutoSetupXcconfig: true,
+		},
+		Device: DeviceConfig{
+			WDAPath:       "/tmp/WebDriverAgent",
+			WDAPort:       8100,
+			DefaultDevice: "",
+			Devices:       []DeviceEntry{},
 		},
 	}
 }
@@ -74,12 +80,12 @@ func MergeWithDefaults(cfg *Config) *Config {
 		cfg.Supabase.ProtectedBranches = defaults.Supabase.ProtectedBranches
 	}
 
-	// APNS defaults
-	if cfg.APNS.KeyPattern == "" {
-		cfg.APNS.KeyPattern = defaults.APNS.KeyPattern
+	// Apple defaults
+	if cfg.Apple.PushKeyPattern == "" {
+		cfg.Apple.PushKeyPattern = defaults.Apple.PushKeyPattern
 	}
-	if cfg.APNS.Environment == "" {
-		cfg.APNS.Environment = defaults.APNS.Environment
+	if cfg.Apple.PushEnvironment == "" {
+		cfg.Apple.PushEnvironment = defaults.Apple.PushEnvironment
 	}
 
 	// Xcode defaults
@@ -129,6 +135,14 @@ func MergeWithDefaults(cfg *Config) *Config {
 	}
 	if len(cfg.Worktree.CopyOnCreate) == 0 {
 		cfg.Worktree.CopyOnCreate = defaults.Worktree.CopyOnCreate
+	}
+
+	// Device defaults
+	if cfg.Device.WDAPath == "" {
+		cfg.Device.WDAPath = defaults.Device.WDAPath
+	}
+	if cfg.Device.WDAPort == 0 {
+		cfg.Device.WDAPort = defaults.Device.WDAPort
 	}
 
 	return cfg

@@ -430,21 +430,21 @@ project:
 			}
 		}
 
-		// Add APNs config if we have values
+		// Add Apple config if we have values
 		if teamID != "" || bundleID != "" {
-			config += fmt.Sprintf(`apns:
+			config += fmt.Sprintf(`apple:
   team_id: "%s"
   bundle_id: "%s"
-  key_pattern: "AuthKey_*.p8"
-  environment: development
+  push_key_pattern: "AuthKey_*.p8"
+  push_environment: development
 
 `, teamID, bundleID)
 		} else {
-			config += `# apns:
+			config += `# apple:
 #   team_id: "YOUR_TEAM_ID"
 #   bundle_id: "com.yourcompany.yourapp"
-#   key_pattern: "AuthKey_*.p8"
-#   environment: development
+#   push_key_pattern: "AuthKey_*.p8"
+#   push_environment: development
 
 `
 		}

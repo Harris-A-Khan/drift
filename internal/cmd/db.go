@@ -27,14 +27,23 @@ different Supabase environments (production, development, feature branches).`,
 }
 
 var dbDumpCmd = &cobra.Command{
-	Use:   "dump <env>",
+	Use:   "dump <env> [filename]",
 	Short: "Dump database (prod|dev)",
 	Long: `Dump a database from the specified environment.
 
+This creates a complete database dump including:
+  - All schemas (public, auth, storage, etc.)
+  - All data including auth.users (user accounts)
+  - All migrations (supabase_migrations schema)
+
+The dump is in plain SQL format and can be restored with 'drift db push'.
+
 Examples:
-  drift db dump prod     # Dump production database
-  drift db dump dev      # Dump development database`,
-	Args: cobra.ExactArgs(1),
+  drift db dump prod              # Dump to prod.backup (default)
+  drift db dump dev               # Dump to dev.backup (default)
+  drift db dump prod mybackup     # Dump to mybackup.backup
+  drift db dump prod -o custom.sql  # Dump to custom.sql`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runDbDump,
 }
 
@@ -236,9 +245,19 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 	opts.User = poolerUser
 	opts.Password = password
 
+	// Determine output filename: -o flag > positional arg > default
 	if dbOutputFlag != "" {
 		opts.OutputFile = dbOutputFlag
+	} else if len(args) > 1 {
+		// User provided filename as second argument
+		filename := args[1]
+		// Add .backup extension if not present
+		if !strings.HasSuffix(filename, ".backup") && !strings.HasSuffix(filename, ".sql") {
+			filename = filename + ".backup"
+		}
+		opts.OutputFile = filename
 	} else {
+		// Default based on environment
 		prefix := "prod"
 		if !isProd {
 			prefix = "dev"
@@ -266,6 +285,12 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 	}
 
 	// Next steps
+	ui.NewLine()
+	ui.SubHeader("What's included")
+	ui.List("All schemas (public, auth, storage, extensions, etc.)")
+	ui.List("All data including auth.users (user accounts)")
+	ui.List("All migrations (supabase_migrations)")
+
 	ui.NewLine()
 	ui.SubHeader("Next Steps")
 	ui.List("drift db push <target>    - Push this backup to another branch")
@@ -498,8 +523,8 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		poolerHost = cfg.Database.PoolerHost
 	}
 
-	// Use session mode (port 5432) for pg_restore
-	poolerPort := 5432
+	// Use transaction mode (port 6543) for psql restore - matches push-db-to-branch.sh
+	poolerPort := 6543
 	poolerUser := fmt.Sprintf("postgres.%s", targetProjectRef)
 
 	ui.KeyValue("Source", sourceFile)
@@ -974,4 +999,5 @@ func cleanSeedFile(inputPath, outputPath string) error {
 	output := strings.Join(cleanLines, "\n")
 	return os.WriteFile(outputPath, []byte(output), 0644)
 }
+
 
