@@ -66,10 +66,15 @@ the list of deployed functions.
 Logs are fetched from the Supabase platform and include:
   - Invocation timestamps
   - Request/response details
-  - Console output and errors`,
+  - Console output and errors
+
+Use --output/-o to save logs to a file. If there are 20+ log entries
+and no output file is specified, you'll be prompted to optionally
+save them to a file.`,
 	Example: `  drift functions logs                # Interactive: select function
   drift functions logs send-email     # View logs for send-email
-  drift functions logs -b dev my-func # Logs from dev environment`,
+  drift functions logs -b dev my-func # Logs from dev environment
+  drift functions logs -o logs.txt fn # Save logs to file`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runFunctionsLogs,
 }
@@ -154,6 +159,7 @@ The function is created locally and can be deployed with:
 var (
 	functionsBranchFlag string
 	functionsEnvFile    string
+	functionsLogsOutput string
 )
 
 func init() {
@@ -165,6 +171,9 @@ func init() {
 
 	// Env file for serve
 	functionsServeCmd.Flags().StringVar(&functionsEnvFile, "env", "", "Path to environment file (default: .env.local)")
+
+	// Output file for logs
+	functionsLogsCmd.Flags().StringVarP(&functionsLogsOutput, "output", "o", "", "Save logs to file instead of displaying")
 
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsLogsCmd)
@@ -410,28 +419,53 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 		ui.NewLine()
 		ui.Dim("Tip: Invoke the function to generate logs, then try again")
 	} else {
-		// Display logs in a readable format
-		for _, entry := range logs {
-			// Format timestamp
-			timestamp := entry.Timestamp
-			if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
-				timestamp = t.Local().Format("15:04:05")
-			}
+		// Check if we should save to file
+		outputFile := functionsLogsOutput
 
-			// Color based on level
-			level := entry.Level
-			switch strings.ToLower(level) {
-			case "error":
-				level = ui.Red(level)
-			case "warning", "warn":
-				level = ui.Yellow(level)
-			case "info":
-				level = ui.Cyan(level)
-			default:
-				level = ui.Dim(level)
+		// If many logs and no output specified, offer to save to file
+		if outputFile == "" && len(logs) >= 20 {
+			ui.Infof("Found %d log entries", len(logs))
+			saveToFile, err := ui.PromptYesNo("Save logs to file?", false)
+			if err == nil && saveToFile {
+				// Suggest a default filename
+				defaultName := fmt.Sprintf("%s-logs-%s.txt", functionName, time.Now().Format("2006-01-02-150405"))
+				outputFile, err = ui.PromptString("Filename", defaultName)
+				if err != nil {
+					outputFile = defaultName
+				}
 			}
+		}
 
-			fmt.Printf("%s [%s] %s\n", ui.Dim(timestamp), level, entry.EventMessage)
+		if outputFile != "" {
+			// Save to file
+			if err := saveLogsToFile(logs, outputFile, functionName, info); err != nil {
+				return fmt.Errorf("failed to save logs: %w", err)
+			}
+			ui.Successf("Saved %d log entries to %s", len(logs), outputFile)
+		} else {
+			// Display logs in terminal
+			for _, entry := range logs {
+				// Format timestamp
+				timestamp := entry.Timestamp
+				if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+					timestamp = t.Local().Format("15:04:05")
+				}
+
+				// Color based on level
+				level := entry.Level
+				switch strings.ToLower(level) {
+				case "error":
+					level = ui.Red(level)
+				case "warning", "warn":
+					level = ui.Yellow(level)
+				case "info":
+					level = ui.Cyan(level)
+				default:
+					level = ui.Dim(level)
+				}
+
+				fmt.Printf("%s [%s] %s\n", ui.Dim(timestamp), level, entry.EventMessage)
+			}
 		}
 	}
 
@@ -441,6 +475,36 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 	ui.List("drift functions list          - See all functions")
 	ui.List("drift functions diff <name>   - Compare local vs deployed")
 	ui.List("drift deploy functions        - Redeploy functions")
+
+	return nil
+}
+
+// saveLogsToFile writes function logs to a file in a readable format.
+func saveLogsToFile(logs []supabase.FunctionLogEntry, filename, functionName string, info *supabase.BranchInfo) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	// Write header
+	fmt.Fprintf(file, "Function Logs: %s\n", functionName)
+	fmt.Fprintf(file, "Environment: %s\n", info.Environment)
+	fmt.Fprintf(file, "Project Ref: %s\n", info.ProjectRef)
+	fmt.Fprintf(file, "Generated: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(file, "Entries: %d\n", len(logs))
+	fmt.Fprintf(file, "\n%s\n\n", strings.Repeat("-", 80))
+
+	// Write log entries
+	for _, entry := range logs {
+		// Format timestamp
+		timestamp := entry.Timestamp
+		if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+			timestamp = t.Local().Format("2006-01-02 15:04:05.000")
+		}
+
+		fmt.Fprintf(file, "%s [%s] %s\n", timestamp, entry.Level, entry.EventMessage)
+	}
 
 	return nil
 }
