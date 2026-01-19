@@ -128,14 +128,14 @@ func (c *Client) InvokeFunction(name string, data string) (*shell.Result, error)
 	return shell.Run("supabase", args...)
 }
 
-// GetFunctionLogs retrieves logs for a function.
-func (c *Client) GetFunctionLogs(name, projectRef string) (*shell.Result, error) {
-	args := []string{"functions", "logs", name}
-	if projectRef != "" {
-		args = append(args, "--project-ref", projectRef)
+// GetFunctionLogs retrieves logs for a function via Management API.
+func (c *Client) GetFunctionLogs(name, projectRef string) ([]FunctionLogEntry, error) {
+	mgmtClient, err := NewManagementClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create management client: %w", err)
 	}
 
-	return shell.Run("supabase", args...)
+	return mgmtClient.GetFunctionLogs(projectRef, name)
 }
 
 // DeployedFunction represents a function deployed on Supabase.

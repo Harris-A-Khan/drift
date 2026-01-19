@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,6 +313,106 @@ func (c *ManagementClient) GetProjectStatus(projectRef string) (string, error) {
 		return "ACTIVE_HEALTHY", nil
 	}
 	return "ACTIVE_UNHEALTHY", nil
+}
+
+// FunctionLogEntry represents a single log entry for an Edge Function.
+type FunctionLogEntry struct {
+	Timestamp    string `json:"timestamp"`
+	EventMessage string `json:"event_message"`
+	Level        string `json:"level"`
+	FunctionID   string `json:"function_id"`
+}
+
+// GetFunctionLogs retrieves logs for an Edge Function via Management API.
+// Returns the last 100 log entries from the past hour.
+func (c *ManagementClient) GetFunctionLogs(projectRef, functionName string) ([]FunctionLogEntry, error) {
+	// Query the function_logs table for console output
+	// Time window: last 1 hour (API requires timestamps)
+	endTime := time.Now().UTC()
+	startTime := endTime.Add(-1 * time.Hour)
+
+	// SQL query to get function logs
+	sql := fmt.Sprintf(`SELECT timestamp, event_message, level, metadata
+FROM function_logs
+WHERE metadata->>'function_id' LIKE '%%%s%%'
+ORDER BY timestamp DESC
+LIMIT 100`, functionName)
+
+	apiURL := fmt.Sprintf("%s/v1/projects/%s/analytics/endpoints/logs.all?sql=%s&iso_timestamp_start=%s&iso_timestamp_end=%s",
+		managementAPIBaseURL,
+		projectRef,
+		url.QueryEscape(sql),
+		url.QueryEscape(startTime.Format(time.RFC3339)),
+		url.QueryEscape(endTime.Format(time.RFC3339)),
+	)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the response - it's an array of log entries
+	var response struct {
+		Result []struct {
+			Timestamp    string      `json:"timestamp"`
+			EventMessage string      `json:"event_message"`
+			Level        string      `json:"level"`
+			Metadata     interface{} `json:"metadata"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		// Try alternate format (direct array)
+		var directResult []struct {
+			Timestamp    string      `json:"timestamp"`
+			EventMessage string      `json:"event_message"`
+			Level        string      `json:"level"`
+			Metadata     interface{} `json:"metadata"`
+		}
+		if err2 := json.Unmarshal(body, &directResult); err2 != nil {
+			return nil, fmt.Errorf("failed to parse logs response: %w (body: %s)", err, string(body))
+		}
+		// Convert to our format
+		var logs []FunctionLogEntry
+		for _, entry := range directResult {
+			logs = append(logs, FunctionLogEntry{
+				Timestamp:    entry.Timestamp,
+				EventMessage: entry.EventMessage,
+				Level:        entry.Level,
+			})
+		}
+		return logs, nil
+	}
+
+	// Convert to our format
+	var logs []FunctionLogEntry
+	for _, entry := range response.Result {
+		logs = append(logs, FunctionLogEntry{
+			Timestamp:    entry.Timestamp,
+			EventMessage: entry.EventMessage,
+			Level:        entry.Level,
+		})
+	}
+
+	return logs, nil
 }
 
 // getProjectStatusFromInfo gets status from the project info endpoint.

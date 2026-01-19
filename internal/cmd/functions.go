@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -397,21 +398,41 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 	sp.Start()
 
 	client := supabase.NewClient()
-	result, err := client.GetFunctionLogs(functionName, info.ProjectRef)
+	logs, err := client.GetFunctionLogs(functionName, info.ProjectRef)
 	sp.Stop()
 
 	if err != nil {
 		return fmt.Errorf("failed to get logs: %w", err)
 	}
 
-	if result.Stdout == "" {
-		ui.Info("No logs available")
+	if len(logs) == 0 {
+		ui.Info("No logs found in the last hour")
+		ui.NewLine()
+		ui.Dim("Tip: Invoke the function to generate logs, then try again")
 	} else {
-		fmt.Println(result.Stdout)
-	}
+		// Display logs in a readable format
+		for _, entry := range logs {
+			// Format timestamp
+			timestamp := entry.Timestamp
+			if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+				timestamp = t.Local().Format("15:04:05")
+			}
 
-	if result.Stderr != "" && IsVerbose() {
-		ui.Warningf("Stderr: %s", result.Stderr)
+			// Color based on level
+			level := entry.Level
+			switch strings.ToLower(level) {
+			case "error":
+				level = ui.Red(level)
+			case "warning", "warn":
+				level = ui.Yellow(level)
+			case "info":
+				level = ui.Cyan(level)
+			default:
+				level = ui.Dim(level)
+			}
+
+			fmt.Printf("%s [%s] %s\n", ui.Dim(timestamp), level, entry.EventMessage)
+		}
 	}
 
 	// Next steps
