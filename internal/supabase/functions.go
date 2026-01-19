@@ -82,6 +82,15 @@ func (c *Client) DeployFunctionWithOptions(name, projectRef string, opts DeployO
 		return fmt.Errorf("failed to deploy function '%s': %s", name, errMsg)
 	}
 
+	// Check exit code - shell.Run returns nil error but non-zero exit code on failure
+	if result.ExitCode != 0 {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = result.Stdout
+		}
+		return fmt.Errorf("failed to deploy function '%s': %s", name, errMsg)
+	}
+
 	return nil
 }
 
@@ -154,6 +163,15 @@ func (c *Client) ListDeployedFunctions(projectRef string) ([]DeployedFunction, e
 	result, err := shell.Run("supabase", args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployed functions: %w", err)
+	}
+
+	// Check exit code - shell.Run returns nil error but non-zero exit code on failure
+	if result.ExitCode != 0 {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = result.Stdout
+		}
+		return nil, fmt.Errorf("failed to list deployed functions: %s", errMsg)
 	}
 
 	var functions []DeployedFunction

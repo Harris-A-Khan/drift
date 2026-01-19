@@ -16,7 +16,25 @@ type Secret struct {
 }
 
 // SetSecret sets a secret on the specified project/branch.
+// Uses the Management API for reliable secret setting on both main projects and branches.
 func (c *Client) SetSecret(projectRef, name, value string) error {
+	// Use Management API - more reliable for branches
+	mgmtClient, err := NewManagementClient()
+	if err != nil {
+		// Fall back to CLI if Management API is not available
+		return c.setSecretViaCLI(projectRef, name, value)
+	}
+
+	secrets := []Secret{{Name: name, Value: value}}
+	if err := mgmtClient.SetSecrets(projectRef, secrets); err != nil {
+		return fmt.Errorf("failed to set secret %s: %w", name, err)
+	}
+
+	return nil
+}
+
+// setSecretViaCLI sets a secret using the Supabase CLI (fallback).
+func (c *Client) setSecretViaCLI(projectRef, name, value string) error {
 	args := []string{"secrets", "set", name + "=" + value}
 	if projectRef != "" {
 		args = append(args, "--project-ref", projectRef)
@@ -31,15 +49,41 @@ func (c *Client) SetSecret(projectRef, name, value string) error {
 		return fmt.Errorf("failed to set secret %s: %s", name, errMsg)
 	}
 
+	// Check exit code - shell.Run returns nil error but non-zero exit code on failure
+	if result.ExitCode != 0 {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = result.Stdout
+		}
+		return fmt.Errorf("failed to set secret %s: %s", name, errMsg)
+	}
+
 	return nil
 }
 
 // SetSecrets sets multiple secrets at once.
+// Uses the Management API for reliable secret setting on both main projects and branches.
 func (c *Client) SetSecrets(projectRef string, secrets []Secret) error {
 	if len(secrets) == 0 {
 		return nil
 	}
 
+	// Use Management API - more reliable for branches
+	mgmtClient, err := NewManagementClient()
+	if err != nil {
+		// Fall back to CLI if Management API is not available
+		return c.setSecretsViaCLI(projectRef, secrets)
+	}
+
+	if err := mgmtClient.SetSecrets(projectRef, secrets); err != nil {
+		return fmt.Errorf("failed to set secrets: %w", err)
+	}
+
+	return nil
+}
+
+// setSecretsViaCLI sets multiple secrets using the Supabase CLI (fallback).
+func (c *Client) setSecretsViaCLI(projectRef string, secrets []Secret) error {
 	args := []string{"secrets", "set"}
 	for _, s := range secrets {
 		args = append(args, s.Name+"="+s.Value)
@@ -58,11 +102,44 @@ func (c *Client) SetSecrets(projectRef string, secrets []Secret) error {
 		return fmt.Errorf("failed to set secrets: %s", errMsg)
 	}
 
+	// Check exit code - shell.Run returns nil error but non-zero exit code on failure
+	if result.ExitCode != 0 {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = result.Stdout
+		}
+		return fmt.Errorf("failed to set secrets: %s", errMsg)
+	}
+
 	return nil
 }
 
 // ListSecrets lists all secrets for a project.
+// Uses the Management API for reliable access on both main projects and branches.
 func (c *Client) ListSecrets(projectRef string) ([]string, error) {
+	// Use Management API - more reliable for branches
+	mgmtClient, err := NewManagementClient()
+	if err != nil {
+		// Fall back to CLI if Management API is not available
+		return c.listSecretsViaCLI(projectRef)
+	}
+
+	secrets, err := mgmtClient.GetSecrets(projectRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list secrets: %w", err)
+	}
+
+	// Extract just the names
+	names := make([]string, len(secrets))
+	for i, s := range secrets {
+		names[i] = s.Name
+	}
+
+	return names, nil
+}
+
+// listSecretsViaCLI lists secrets using the Supabase CLI (fallback).
+func (c *Client) listSecretsViaCLI(projectRef string) ([]string, error) {
 	args := []string{"secrets", "list"}
 	if projectRef != "" {
 		args = append(args, "--project-ref", projectRef)
@@ -71,6 +148,15 @@ func (c *Client) ListSecrets(projectRef string) ([]string, error) {
 	result, err := shell.Run("supabase", args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list secrets: %w", err)
+	}
+
+	// Check exit code
+	if result.ExitCode != 0 {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = result.Stdout
+		}
+		return nil, fmt.Errorf("failed to list secrets: %s", errMsg)
 	}
 
 	// Parse the output (typically a table format)
