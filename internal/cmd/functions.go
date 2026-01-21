@@ -444,6 +444,8 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 			ui.Successf("Saved %d log entries to %s", len(logs), outputFile)
 		} else {
 			// Display logs in terminal
+			ui.Infof("Showing %d log entries (last hour):", len(logs))
+			ui.NewLine()
 			for _, entry := range logs {
 				// Format timestamp
 				timestamp := entry.Timestamp
