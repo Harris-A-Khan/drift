@@ -48,16 +48,20 @@ var backupListCmd = &cobra.Command{
 	Use:   "list <env>",
 	Short: "List available backups",
 	Long:  `List all available backups for an environment.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runBackupList,
+	Example: `  drift backup list prod    # List all production backups
+  drift backup list dev     # List all development backups`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBackupList,
 }
 
 var backupDeleteCmd = &cobra.Command{
 	Use:   "delete <env> <filename>",
 	Short: "Delete a specific backup",
 	Long:  `Delete a specific backup from cloud storage.`,
-	Args:  cobra.ExactArgs(2),
-	RunE:  runBackupDelete,
+	Example: `  drift backup delete prod 20240101_120000_prod.backup
+  drift backup delete dev 20240115_093000_dev.backup`,
+	Args: cobra.ExactArgs(2),
+	RunE: runBackupDelete,
 }
 
 var (
@@ -184,6 +188,12 @@ func runBackupDownload(cmd *cobra.Command, args []string) error {
 		ui.KeyValue("Size", fmt.Sprintf("%.2f MB", sizeMB))
 	}
 
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List(fmt.Sprintf("drift db restore %s  - Restore this backup to database", outputPath))
+	ui.List("drift db status        - Check current database status")
+
 	return nil
 }
 
@@ -236,6 +246,12 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 	ui.Infof("Total: %d backups", len(backups))
+
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List(fmt.Sprintf("drift backup download %s   - Download latest backup", env))
+	ui.List(fmt.Sprintf("drift backup delete %s <filename>  - Delete a backup", env))
 
 	return nil
 }
@@ -291,6 +307,11 @@ func runBackupDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	sp.Success("Backup deleted")
+
+	// Next steps
+	ui.NewLine()
+	ui.SubHeader("Next Steps")
+	ui.List(fmt.Sprintf("drift backup list %s  - Verify backup was deleted", env))
 
 	return nil
 }

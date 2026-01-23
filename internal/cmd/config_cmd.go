@@ -35,6 +35,8 @@ When set, all drift commands will use this Supabase branch for credentials
 instead of trying to match by git branch name.
 
 If no branch is specified, shows available branches for selection.`,
+	Example: `  drift config set-branch           # Interactive selection
+  drift config set-branch my-branch  # Set specific branch`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runConfigSetBranch,
 }
@@ -43,7 +45,8 @@ var configClearBranchCmd = &cobra.Command{
 	Use:   "clear-branch",
 	Short: "Clear the Supabase branch override",
 	Long:  `Remove the override branch, returning to automatic branch detection.`,
-	RunE:  runConfigClearBranch,
+	Example: `  drift config clear-branch  # Return to automatic detection`,
+	RunE:    runConfigClearBranch,
 }
 
 func init() {

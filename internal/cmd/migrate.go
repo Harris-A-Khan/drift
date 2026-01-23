@@ -428,6 +428,9 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	ui.SubHeader("Migrations")
 
 	// Get DB URL for the project
+	sp := ui.NewSpinner("Checking migration status")
+	sp.Start()
+
 	var result *shell.Result
 	if info != nil {
 		dbURL, urlErr := getDbURLForProject(info.ProjectRef)
@@ -439,6 +442,8 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		result, err = shell.Run("supabase", "migration", "list")
 	}
+
+	sp.Stop()
 
 	if err != nil {
 		ui.Warning("Could not list migrations")
