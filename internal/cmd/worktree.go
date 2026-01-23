@@ -91,6 +91,43 @@ var wtPruneCmd = &cobra.Command{
 	RunE:  runWorktreePrune,
 }
 
+var wtInfoCmd = &cobra.Command{
+	Use:   "info [branch]",
+	Short: "Show detailed worktree info",
+	Long: `Show detailed information about a worktree, including:
+- Commits ahead/behind origin
+- Uncommitted changes count
+- Supabase branch mapping
+- Environment (production/development/feature)
+
+If no branch is specified, shows info for the current worktree.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorktreeInfo,
+}
+
+var wtCleanupCmd = &cobra.Command{
+	Use:   "cleanup",
+	Short: "Clean up merged worktrees",
+	Long: `Find and delete worktrees for branches that have been merged into main.
+
+This command:
+1. Detects branches merged into main/master
+2. Shows which worktrees can be safely deleted
+3. Prompts for confirmation before each deletion
+4. Optionally deletes the remote branch as well`,
+	RunE: runWorktreeCleanup,
+}
+
+var wtSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync worktrees with remote",
+	Long: `Interactively select worktrees to sync with their remote branches.
+
+Shows all worktrees with checkboxes for selection.
+For each selected worktree, pulls the latest changes from origin.`,
+	RunE: runWorktreeSync,
+}
+
 var (
 	wtFromFlag    string
 	wtOpenFlag    bool
@@ -119,6 +156,9 @@ func init() {
 	worktreeCmd.AddCommand(wtDeleteCmd)
 	worktreeCmd.AddCommand(wtPathCmd)
 	worktreeCmd.AddCommand(wtPruneCmd)
+	worktreeCmd.AddCommand(wtInfoCmd)
+	worktreeCmd.AddCommand(wtCleanupCmd)
+	worktreeCmd.AddCommand(wtSyncCmd)
 	rootCmd.AddCommand(worktreeCmd)
 }
 
@@ -171,11 +211,39 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 			locked = ui.Yellow(" [locked]")
 		}
 
-		fmt.Printf("  %s %s%s%s\n", branchColored, ui.Dim(wt.Path), locked, current)
+		// Status indicators
+		statusIndicators := ""
+
+		// Uncommitted changes indicator
+		if !wt.IsBare {
+			changes, err := git.GetUncommittedChanges(wt.Path)
+			if err == nil && changes > 0 {
+				statusIndicators += ui.Yellow(" ●")
+			}
+		}
+
+		// Ahead/behind indicator (skip for current to avoid slowdown)
+		if !wt.IsCurrent && !wt.IsBare && wt.Branch != "" {
+			ahead, behind, err := git.GetAheadBehind(wt.Path, wt.Branch)
+			if err == nil {
+				if ahead > 0 {
+					statusIndicators += ui.Green(fmt.Sprintf(" ↑%d", ahead))
+				}
+				if behind > 0 {
+					statusIndicators += ui.Red(fmt.Sprintf(" ↓%d", behind))
+				}
+			}
+		}
+
+		fmt.Printf("  %s%s %s%s%s\n", branchColored, statusIndicators, ui.Dim(wt.Path), locked, current)
 	}
 
 	ui.NewLine()
 	ui.Infof("Total: %d worktrees", len(worktrees))
+
+	// Show legend
+	ui.NewLine()
+	ui.Info("Legend: " + ui.Yellow("●") + " uncommitted  " + ui.Green("↑") + " ahead  " + ui.Red("↓") + " behind")
 
 	return nil
 }
@@ -636,6 +704,269 @@ func runWorktreePrune(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Success("Worktrees pruned")
+	return nil
+}
+
+func runWorktreeInfo(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+
+	var wt *git.Worktree
+	var err error
+
+	if len(args) == 1 {
+		wt, err = git.GetWorktree(args[0])
+	} else {
+		// Get current worktree
+		worktrees, err := git.ListWorktrees()
+		if err != nil {
+			return err
+		}
+		for i := range worktrees {
+			if worktrees[i].IsCurrent {
+				wt = &worktrees[i]
+				break
+			}
+		}
+		if wt == nil {
+			return fmt.Errorf("could not determine current worktree")
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	ui.Header("Worktree Info")
+	ui.KeyValue("Branch", ui.Cyan(wt.Branch))
+	ui.KeyValue("Path", wt.Path)
+
+	// Get ahead/behind counts
+	ahead, behind, err := git.GetAheadBehind(wt.Path, wt.Branch)
+	if err == nil {
+		status := ""
+		if ahead > 0 && behind > 0 {
+			status = fmt.Sprintf("%s, %s", ui.Green(fmt.Sprintf("+%d ahead", ahead)), ui.Red(fmt.Sprintf("-%d behind", behind)))
+		} else if ahead > 0 {
+			status = ui.Green(fmt.Sprintf("+%d ahead", ahead))
+		} else if behind > 0 {
+			status = ui.Red(fmt.Sprintf("-%d behind", behind))
+		} else {
+			status = ui.Green("up to date")
+		}
+		ui.KeyValue("Remote Status", status)
+	}
+
+	// Get uncommitted changes
+	changes, err := git.GetUncommittedChanges(wt.Path)
+	if err == nil {
+		if changes > 0 {
+			ui.KeyValue("Uncommitted", ui.Yellow(fmt.Sprintf("%d file(s)", changes)))
+		} else {
+			ui.KeyValue("Uncommitted", ui.Green("clean"))
+		}
+	}
+
+	// Environment detection
+	env := "Feature"
+	if wt.Branch == "main" || wt.Branch == "master" {
+		env = "Production"
+	} else if wt.Branch == "development" || wt.Branch == "dev" {
+		env = "Development"
+	}
+	ui.KeyValue("Environment", envColorString(env))
+
+	return nil
+}
+
+func runWorktreeCleanup(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+
+	ui.Header("Worktree Cleanup")
+
+	// Get merged branches
+	mergedBranches, err := git.GetMergedBranches()
+	if err != nil {
+		return fmt.Errorf("could not get merged branches: %w", err)
+	}
+
+	// Get worktrees
+	worktrees, err := git.ListWorktrees()
+	if err != nil {
+		return err
+	}
+
+	// Find worktrees with merged branches
+	var cleanupCandidates []*git.Worktree
+	for i := range worktrees {
+		wt := &worktrees[i]
+		if wt.IsBare || wt.IsCurrent {
+			continue
+		}
+		// Skip protected branches
+		if wt.Branch == "main" || wt.Branch == "master" || wt.Branch == "development" {
+			continue
+		}
+		// Check if branch is merged
+		for _, merged := range mergedBranches {
+			if wt.Branch == merged {
+				cleanupCandidates = append(cleanupCandidates, wt)
+				break
+			}
+		}
+	}
+
+	if len(cleanupCandidates) == 0 {
+		ui.Success("No worktrees to clean up - all branches are unmerged")
+		return nil
+	}
+
+	ui.Infof("Found %d worktree(s) with merged branches:", len(cleanupCandidates))
+	ui.NewLine()
+
+	for _, wt := range cleanupCandidates {
+		ui.List(fmt.Sprintf("%s → %s", ui.Cyan(wt.Branch), ui.Dim(wt.Path)))
+	}
+
+	ui.NewLine()
+
+	// Process each candidate
+	deletedCount := 0
+	for _, wt := range cleanupCandidates {
+		ui.NewLine()
+		ui.Infof("Branch '%s' has been merged", wt.Branch)
+
+		// Check for uncommitted changes
+		changes, _ := git.GetUncommittedChanges(wt.Path)
+		if changes > 0 {
+			ui.Warning(fmt.Sprintf("Has %d uncommitted changes", changes))
+		}
+
+		confirmed, err := ui.PromptYesNo(fmt.Sprintf("Delete worktree for '%s'?", wt.Branch), false)
+		if err != nil || !confirmed {
+			ui.Info("Skipped")
+			continue
+		}
+
+		// Delete worktree
+		if err := git.RemoveWorktree(wt.Path, false); err != nil {
+			ui.Warning(fmt.Sprintf("Could not delete worktree: %v", err))
+			continue
+		}
+		ui.Success(fmt.Sprintf("Deleted worktree: %s", wt.Path))
+
+		// Ask about deleting the branch
+		deleteRemote, _ := ui.PromptYesNo(fmt.Sprintf("Also delete remote branch '%s'?", wt.Branch), false)
+		if deleteRemote {
+			if err := git.DeleteRemoteBranch("origin", wt.Branch); err != nil {
+				ui.Warning(fmt.Sprintf("Could not delete remote branch: %v", err))
+			} else {
+				ui.Success(fmt.Sprintf("Deleted remote branch: origin/%s", wt.Branch))
+			}
+		}
+
+		// Delete local branch
+		if err := git.DeleteBranch(wt.Branch, false); err != nil {
+			ui.Warning(fmt.Sprintf("Could not delete local branch: %v", err))
+		} else {
+			ui.Success(fmt.Sprintf("Deleted local branch: %s", wt.Branch))
+		}
+
+		deletedCount++
+	}
+
+	ui.NewLine()
+	ui.Successf("Cleanup complete: %d worktree(s) deleted", deletedCount)
+
+	return nil
+}
+
+func runWorktreeSync(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+
+	ui.Header("Sync Worktrees")
+
+	// Get worktrees
+	worktrees, err := git.ListWorktrees()
+	if err != nil {
+		return err
+	}
+
+	// Filter to non-bare worktrees
+	var syncable []git.Worktree
+	for _, wt := range worktrees {
+		if !wt.IsBare && wt.Branch != "" {
+			syncable = append(syncable, wt)
+		}
+	}
+
+	if len(syncable) == 0 {
+		ui.Info("No worktrees to sync")
+		return nil
+	}
+
+	// Build options for multi-select
+	options := make([]string, len(syncable))
+	for i, wt := range syncable {
+		status := ""
+		if wt.IsCurrent {
+			status = " (current)"
+		}
+		options[i] = fmt.Sprintf("%s%s", wt.Branch, status)
+	}
+
+	// Show multi-select
+	selected, err := ui.PromptMultiSelect("Select worktrees to sync", options, nil)
+	if err != nil {
+		return err
+	}
+
+	if len(selected) == 0 {
+		ui.Info("No worktrees selected")
+		return nil
+	}
+
+	ui.NewLine()
+	ui.Infof("Syncing %d worktree(s)...", len(selected))
+	ui.NewLine()
+
+	successCount := 0
+	for _, sel := range selected {
+		// Find the worktree
+		branchName := strings.TrimSuffix(sel, " (current)")
+		var wt *git.Worktree
+		for i := range syncable {
+			if syncable[i].Branch == branchName {
+				wt = &syncable[i]
+				break
+			}
+		}
+
+		if wt == nil {
+			continue
+		}
+
+		sp := ui.NewSpinner(fmt.Sprintf("Syncing %s", wt.Branch))
+		sp.Start()
+
+		// Pull from origin
+		err := git.PullInWorktree(wt.Path)
+		if err != nil {
+			sp.Fail(fmt.Sprintf("Failed to sync %s: %v", wt.Branch, err))
+			continue
+		}
+
+		sp.Success(fmt.Sprintf("Synced %s", wt.Branch))
+		successCount++
+	}
+
+	ui.NewLine()
+	ui.Successf("Sync complete: %d/%d worktrees updated", successCount, len(selected))
+
 	return nil
 }
 

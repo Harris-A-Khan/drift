@@ -13,7 +13,9 @@ func DefaultConfig() *Config {
 			FunctionsDir:      "supabase/functions",
 			MigrationsDir:     "supabase/migrations",
 			ProtectedBranches: []string{"main", "master"},
+			Functions:         FunctionsConfig{Restricted: []FunctionRestriction{}},
 		},
+		Environments: map[string]EnvironmentConfig{},
 		Apple: AppleConfig{
 			TeamID:          "",
 			BundleID:        "",

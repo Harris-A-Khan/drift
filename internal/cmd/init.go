@@ -10,6 +10,7 @@ import (
 	"github.com/undrift/drift/internal/config"
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
+	"github.com/undrift/drift/internal/xcode"
 	"github.com/undrift/drift/pkg/shell"
 )
 
@@ -118,6 +119,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 	ui.Success(fmt.Sprintf("Created %s", configPath))
+
+	// Write local configuration file
+	localConfigPath := config.LocalConfigFilename
+	if err := config.WriteLocalConfig(localConfigPath); err != nil {
+		ui.Warning(fmt.Sprintf("Could not create %s: %v", localConfigPath, err))
+	} else {
+		ui.Success(fmt.Sprintf("Created %s", localConfigPath))
+	}
+
+	// Add .drift.local.yaml to .gitignore
+	cwd, _ := os.Getwd()
+	if err := config.AddToGitignore(cwd); err != nil {
+		ui.Warning(fmt.Sprintf("Could not update .gitignore: %v", err))
+	} else {
+		ui.Success("Added .drift.local.yaml to .gitignore")
+	}
 
 	// Link Supabase project if we have a ref
 	if supabaseProjectRef != "" {
@@ -449,15 +466,33 @@ project:
 `
 		}
 
-		config += fmt.Sprintf(`xcode:
-  xcconfig_output: %s
-  version_file: Version.xcconfig
-  # schemes:
+		// Detect Xcode schemes
+		detectedSchemes := xcode.SuggestSchemes(name)
+		schemesConfig := ""
+		if len(detectedSchemes) > 0 {
+			schemesConfig = "  schemes:\n"
+			if s, ok := detectedSchemes["production"]; ok {
+				schemesConfig += fmt.Sprintf("    production: \"%s\"\n", s)
+			}
+			if s, ok := detectedSchemes["development"]; ok {
+				schemesConfig += fmt.Sprintf("    development: \"%s\"\n", s)
+			}
+			if s, ok := detectedSchemes["feature"]; ok {
+				schemesConfig += fmt.Sprintf("    feature: \"%s\"\n", s)
+			}
+		} else {
+			schemesConfig = `  # schemes:
   #   production: "App (Production)"
   #   development: "App (Development)"
   #   feature: "App (Feature)"
+`
+		}
 
-`, xcconfigPath)
+		config += fmt.Sprintf(`xcode:
+  xcconfig_output: %s
+  version_file: Version.xcconfig
+%s
+`, xcconfigPath, schemesConfig)
 	}
 
 	// Common sections

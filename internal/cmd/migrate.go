@@ -163,12 +163,10 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Confirm for production (stricter)
-	if info.Environment == supabase.EnvProduction && !IsYes() {
-		ui.Warning("You are about to push migrations to PRODUCTION!")
-		confirmed, err := ui.PromptYesNo("Are you absolutely sure?", false)
+	// Confirm for production (stricter - requires typing "yes")
+	if info.Environment == supabase.EnvProduction {
+		confirmed, err := RequireProductionConfirmation(info.Environment, "push migrations")
 		if err != nil || !confirmed {
-			ui.Info("Cancelled")
 			return nil
 		}
 	} else if !IsYes() {

@@ -62,6 +62,37 @@ var envSwitchCmd = &cobra.Command{
 	RunE:  runEnvSwitch,
 }
 
+var envValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Validate environment configuration",
+	Long: `Perform comprehensive validation of your environment configuration.
+
+Validation checks:
+1. Config file exists and is valid YAML
+2. Required Supabase credentials are set (SUPABASE_URL, SUPABASE_ANON_KEY)
+3. Drift markers are intact (=== DRIFT MANAGED ===)
+4. Configured Xcode schemes exist (if applicable)
+5. DB_SCHEMA_VERSION matches latest migration (optional)`,
+	RunE: runEnvValidate,
+}
+
+var envDiffCmd = &cobra.Command{
+	Use:   "diff <branch1> <branch2>",
+	Short: "Compare environments between branches",
+	Long: `Compare the environment configuration between two branches.
+
+Shows differences in:
+- Supabase URL and Project Ref
+- API keys (masked)
+- Custom variables
+
+Examples:
+  drift env diff main dev
+  drift env diff main feat/new-feature`,
+	Args: cobra.ExactArgs(2),
+	RunE: runEnvDiff,
+}
+
 var (
 	envBranchFlag         string
 	envBuildServerFlag    bool
@@ -80,6 +111,8 @@ func init() {
 	envCmd.AddCommand(envShowCmd)
 	envCmd.AddCommand(envSetupCmd)
 	envCmd.AddCommand(envSwitchCmd)
+	envCmd.AddCommand(envValidateCmd)
+	envCmd.AddCommand(envDiffCmd)
 	rootCmd.AddCommand(envCmd)
 }
 
@@ -736,5 +769,356 @@ func copyXcconfigCustomVariables(sourcePath, destPath string) error {
 
 	ui.Success(fmt.Sprintf("Copied custom variables from %s", sourcePath))
 	return nil
+}
+
+func runEnvValidate(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+	cfg := config.LoadOrDefault()
+
+	ui.Header("Environment Validation")
+
+	hasErrors := false
+	validCount := 0
+	totalChecks := 0
+
+	// Check 1: Config file validity
+	totalChecks++
+	ui.SubHeader("Config File")
+	configPath, _ := config.FindConfigFile()
+	if configPath != "" {
+		ui.Success(fmt.Sprintf("Config file: %s", configPath))
+		validCount++
+	} else {
+		ui.Error("Config file not found")
+		hasErrors = true
+	}
+
+	// Check 2: Environment config file exists
+	totalChecks++
+	ui.NewLine()
+	ui.SubHeader("Environment File")
+
+	var envFilePath string
+	var envFileContent string
+	if cfg.Project.IsWebPlatform() {
+		envFilePath = cfg.GetEnvLocalPath()
+	} else {
+		envFilePath = cfg.GetXcconfigPath()
+	}
+
+	if _, err := os.Stat(envFilePath); err == nil {
+		data, readErr := os.ReadFile(envFilePath)
+		if readErr == nil {
+			envFileContent = string(data)
+			ui.Success(fmt.Sprintf("Environment file: %s", envFilePath))
+			validCount++
+		} else {
+			ui.Error(fmt.Sprintf("Cannot read %s: %v", envFilePath, readErr))
+			hasErrors = true
+		}
+	} else {
+		ui.Warning(fmt.Sprintf("Environment file not found: %s", envFilePath))
+		ui.Info("Run 'drift env setup' to generate it")
+		hasErrors = true
+	}
+
+	// Check 3: Required variables present
+	if envFileContent != "" {
+		totalChecks++
+		ui.NewLine()
+		ui.SubHeader("Required Variables")
+
+		if cfg.Project.IsWebPlatform() {
+			// Check for NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+			requiredVars := []string{"NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"}
+			allPresent := true
+			for _, v := range requiredVars {
+				if strings.Contains(envFileContent, v+"=") {
+					// Check if value is not empty
+					for _, line := range strings.Split(envFileContent, "\n") {
+						if strings.HasPrefix(line, v+"=") {
+							value := strings.TrimPrefix(line, v+"=")
+							value = strings.Trim(value, "\"' ")
+							if value != "" {
+								fmt.Printf("  %s %s\n", ui.Green("✓"), v)
+							} else {
+								fmt.Printf("  %s %s %s\n", ui.Red("✗"), v, ui.Red("(empty)"))
+								allPresent = false
+							}
+							break
+						}
+					}
+				} else {
+					fmt.Printf("  %s %s %s\n", ui.Red("✗"), v, ui.Red("(missing)"))
+					allPresent = false
+				}
+			}
+			if allPresent {
+				validCount++
+			} else {
+				hasErrors = true
+			}
+		} else {
+			// Check for SUPABASE_URL and SUPABASE_ANON_KEY in xcconfig
+			requiredVars := []string{"SUPABASE_URL", "SUPABASE_ANON_KEY"}
+			allPresent := true
+			for _, v := range requiredVars {
+				if strings.Contains(envFileContent, v+" = ") || strings.Contains(envFileContent, v+"=") {
+					fmt.Printf("  %s %s\n", ui.Green("✓"), v)
+				} else {
+					fmt.Printf("  %s %s %s\n", ui.Red("✗"), v, ui.Red("(missing)"))
+					allPresent = false
+				}
+			}
+			if allPresent {
+				validCount++
+			} else {
+				hasErrors = true
+			}
+		}
+	}
+
+	// Check 4: Drift markers intact
+	if envFileContent != "" {
+		totalChecks++
+		ui.NewLine()
+		ui.SubHeader("Drift Markers")
+
+		hasStartMarker := strings.Contains(envFileContent, "DRIFT MANAGED")
+		if hasStartMarker {
+			ui.Success("Drift markers are intact")
+			validCount++
+		} else {
+			ui.Warning("Drift markers not found - file may have been manually edited")
+			ui.Info("Run 'drift env setup' to regenerate with markers")
+		}
+	}
+
+	// Check 5: Xcode schemes (for Apple platforms)
+	if !cfg.Project.IsWebPlatform() && cfg.Xcode.Schemes != nil && len(cfg.Xcode.Schemes) > 0 {
+		totalChecks++
+		ui.NewLine()
+		ui.SubHeader("Xcode Schemes")
+
+		allValid := true
+		for env, scheme := range cfg.Xcode.Schemes {
+			if scheme == "" {
+				continue
+			}
+			if xcode.SchemeExists(scheme) {
+				fmt.Printf("  %s %s: %s\n", ui.Green("✓"), env, scheme)
+			} else {
+				fmt.Printf("  %s %s: %s %s\n", ui.Red("✗"), env, scheme, ui.Red("(not found)"))
+				allValid = false
+			}
+		}
+		if allValid {
+			validCount++
+		} else {
+			hasErrors = true
+		}
+	}
+
+	// Summary
+	ui.NewLine()
+	if hasErrors {
+		ui.Warningf("Validation complete: %d/%d checks passed", validCount, totalChecks)
+		return fmt.Errorf("validation failed")
+	}
+
+	ui.Successf("All %d validation checks passed", totalChecks)
+	return nil
+}
+
+func runEnvDiff(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+	cfg := config.LoadOrDefault()
+
+	branch1 := args[0]
+	branch2 := args[1]
+
+	ui.Header("Environment Diff")
+	ui.Infof("Comparing: %s vs %s", ui.Cyan(branch1), ui.Cyan(branch2))
+	ui.NewLine()
+
+	// Find worktrees for each branch
+	wt1, err := git.GetWorktree(branch1)
+	if err != nil {
+		return fmt.Errorf("branch '%s' not found as worktree: %w", branch1, err)
+	}
+
+	wt2, err := git.GetWorktree(branch2)
+	if err != nil {
+		return fmt.Errorf("branch '%s' not found as worktree: %w", branch2, err)
+	}
+
+	// Determine the config file name
+	var configFileName string
+	if cfg.Project.IsWebPlatform() {
+		configFileName = filepath.Base(cfg.GetEnvLocalPath())
+	} else {
+		configFileName = filepath.Base(cfg.GetXcconfigPath())
+	}
+
+	// Read config files from each worktree
+	path1 := filepath.Join(wt1.Path, configFileName)
+	path2 := filepath.Join(wt2.Path, configFileName)
+
+	data1, err1 := os.ReadFile(path1)
+	data2, err2 := os.ReadFile(path2)
+
+	if err1 != nil && err2 != nil {
+		return fmt.Errorf("neither worktree has %s", configFileName)
+	}
+
+	// Parse variables from each file
+	vars1 := parseEnvVariables(string(data1))
+	vars2 := parseEnvVariables(string(data2))
+
+	// Compare and display differences
+	ui.SubHeader("Supabase Configuration")
+
+	// List of variables to compare (with masking for sensitive ones)
+	compareVars := []struct {
+		name   string
+		masked bool
+	}{
+		{"SUPABASE_URL", false},
+		{"NEXT_PUBLIC_SUPABASE_URL", false},
+		{"SUPABASE_ANON_KEY", true},
+		{"NEXT_PUBLIC_SUPABASE_ANON_KEY", true},
+		{"SUPABASE_PROJECT_REF", false},
+		{"DRIFT_ENVIRONMENT", false},
+		{"DRIFT_SUPABASE_BRANCH", false},
+	}
+
+	hasDiff := false
+	for _, v := range compareVars {
+		val1 := vars1[v.name]
+		val2 := vars2[v.name]
+
+		if val1 == "" && val2 == "" {
+			continue
+		}
+
+		if v.masked {
+			val1 = maskValue(val1)
+			val2 = maskValue(val2)
+		}
+
+		if val1 == val2 {
+			fmt.Printf("  %s = %s (same)\n", v.name, ui.Dim(truncateValue(val1, 40)))
+		} else {
+			hasDiff = true
+			fmt.Printf("  %s:\n", ui.Yellow(v.name))
+			fmt.Printf("    %s: %s\n", ui.Cyan(branch1), truncateValue(val1, 50))
+			fmt.Printf("    %s: %s\n", ui.Cyan(branch2), truncateValue(val2, 50))
+		}
+	}
+
+	// Show custom variables diff
+	ui.NewLine()
+	ui.SubHeader("Custom Variables")
+
+	// Find all unique variable names
+	allVars := make(map[string]bool)
+	for k := range vars1 {
+		allVars[k] = true
+	}
+	for k := range vars2 {
+		allVars[k] = true
+	}
+
+	// Filter out the compared ones
+	comparedNames := make(map[string]bool)
+	for _, v := range compareVars {
+		comparedNames[v.name] = true
+	}
+
+	customDiff := false
+	for name := range allVars {
+		if comparedNames[name] {
+			continue
+		}
+		// Skip comments and empty lines
+		if strings.HasPrefix(name, "#") || name == "" {
+			continue
+		}
+
+		val1 := vars1[name]
+		val2 := vars2[name]
+
+		if val1 == "" && val2 != "" {
+			customDiff = true
+			fmt.Printf("  %s: only in %s\n", ui.Yellow(name), ui.Cyan(branch2))
+		} else if val2 == "" && val1 != "" {
+			customDiff = true
+			fmt.Printf("  %s: only in %s\n", ui.Yellow(name), ui.Cyan(branch1))
+		} else if val1 != val2 {
+			customDiff = true
+			fmt.Printf("  %s: different values\n", ui.Yellow(name))
+		}
+	}
+
+	if !customDiff {
+		ui.Info("No differences in custom variables")
+	}
+
+	ui.NewLine()
+	if hasDiff || customDiff {
+		ui.Warningf("Environments differ between %s and %s", branch1, branch2)
+	} else {
+		ui.Success("Environments are identical")
+	}
+
+	return nil
+}
+
+// parseEnvVariables parses environment variables from a config file.
+func parseEnvVariables(content string) map[string]string {
+	vars := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// Handle both = and : = formats (xcconfig vs env)
+		var key, value string
+		if idx := strings.Index(line, " = "); idx != -1 {
+			key = strings.TrimSpace(line[:idx])
+			value = strings.TrimSpace(line[idx+3:])
+		} else if idx := strings.Index(line, "="); idx != -1 {
+			key = strings.TrimSpace(line[:idx])
+			value = strings.TrimSpace(line[idx+1:])
+		} else {
+			continue
+		}
+
+		// Remove quotes
+		value = strings.Trim(value, "\"'")
+		vars[key] = value
+	}
+	return vars
+}
+
+// maskValue masks a sensitive value, showing only the first and last few characters.
+func maskValue(value string) string {
+	if len(value) <= 8 {
+		return "****"
+	}
+	return value[:4] + "****" + value[len(value)-4:]
+}
+
+// truncateValue truncates a value to the specified length.
+func truncateValue(value string, maxLen int) string {
+	if len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen-3] + "..."
 }
 

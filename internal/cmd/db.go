@@ -532,8 +532,14 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Project Ref", ui.Cyan(targetProjectRef))
 	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
-	// Confirm
-	if !IsYes() {
+	// Confirm - stricter for development (permanent branch) vs feature (preview)
+	if targetEnv == "Development" {
+		// Development is a persistent branch, require stricter confirmation
+		confirmed, err := ConfirmDestructiveOperation("REPLACE the development database with this backup")
+		if err != nil || !confirmed {
+			return nil
+		}
+	} else if !IsYes() {
 		ui.NewLine()
 		ui.Warning("This will REPLACE the target database!")
 		confirmed, err := ui.PromptYesNo("Continue?", false)

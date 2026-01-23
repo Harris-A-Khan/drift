@@ -281,8 +281,14 @@ func runBackupDelete(cmd *cobra.Command, args []string) error {
 	ui.KeyValue("Environment", env)
 	ui.KeyValue("Filename", filename)
 
-	// Confirm
-	if !IsYes() {
+	// Extra confirmation for production backups
+	if env == "prod" {
+		confirmed, err := RequireDestructiveConfirmation("permanently delete this PRODUCTION backup")
+		if err != nil || !confirmed {
+			return nil
+		}
+	} else if !IsYes() {
+		// Normal confirmation for non-production
 		ui.NewLine()
 		ui.Warning("This will permanently delete the backup!")
 		confirmed, err := ui.PromptYesNo("Are you sure?", false)

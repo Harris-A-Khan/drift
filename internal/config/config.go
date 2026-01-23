@@ -11,15 +11,19 @@ import (
 
 // Config represents the .drift.yaml configuration file.
 type Config struct {
-	Project  ProjectConfig  `yaml:"project" mapstructure:"project"`
-	Supabase SupabaseConfig `yaml:"supabase" mapstructure:"supabase"`
-	Apple    AppleConfig    `yaml:"apple" mapstructure:"apple"`
-	Xcode    XcodeConfig    `yaml:"xcode" mapstructure:"xcode"`
-	Web      WebConfig      `yaml:"web" mapstructure:"web"`
-	Database DatabaseConfig `yaml:"database" mapstructure:"database"`
-	Backup   BackupConfig   `yaml:"backup" mapstructure:"backup"`
-	Worktree WorktreeConfig `yaml:"worktree" mapstructure:"worktree"`
-	Device   DeviceConfig   `yaml:"device" mapstructure:"device"`
+	Project      ProjectConfig             `yaml:"project" mapstructure:"project"`
+	Supabase     SupabaseConfig            `yaml:"supabase" mapstructure:"supabase"`
+	Apple        AppleConfig               `yaml:"apple" mapstructure:"apple"`
+	Xcode        XcodeConfig               `yaml:"xcode" mapstructure:"xcode"`
+	Web          WebConfig                 `yaml:"web" mapstructure:"web"`
+	Database     DatabaseConfig            `yaml:"database" mapstructure:"database"`
+	Backup       BackupConfig              `yaml:"backup" mapstructure:"backup"`
+	Worktree     WorktreeConfig            `yaml:"worktree" mapstructure:"worktree"`
+	Device       DeviceConfig              `yaml:"device" mapstructure:"device"`
+	Environments map[string]EnvironmentConfig `yaml:"environments" mapstructure:"environments"`
+
+	// Preferences from .drift.local.yaml (merged at runtime)
+	Preferences PreferencesConfig `yaml:"-" mapstructure:"-"`
 
 	// Internal: path to the config file
 	configPath string
@@ -51,12 +55,30 @@ func (p *ProjectConfig) IsWebPlatform() bool {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRef        string   `yaml:"project_ref" mapstructure:"project_ref"`
-	ProjectName       string   `yaml:"project_name" mapstructure:"project_name"`
-	FunctionsDir      string   `yaml:"functions_dir" mapstructure:"functions_dir"`
-	MigrationsDir     string   `yaml:"migrations_dir" mapstructure:"migrations_dir"`
-	ProtectedBranches []string `yaml:"protected_branches" mapstructure:"protected_branches"`
-	OverrideBranch    string   `yaml:"override_branch" mapstructure:"override_branch"`
+	ProjectRef        string                `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string                `yaml:"project_name" mapstructure:"project_name"`
+	FunctionsDir      string                `yaml:"functions_dir" mapstructure:"functions_dir"`
+	MigrationsDir     string                `yaml:"migrations_dir" mapstructure:"migrations_dir"`
+	ProtectedBranches []string              `yaml:"protected_branches" mapstructure:"protected_branches"`
+	OverrideBranch    string                `yaml:"override_branch" mapstructure:"override_branch"`
+	Functions         FunctionsConfig       `yaml:"functions" mapstructure:"functions"`
+}
+
+// FunctionsConfig holds Edge Functions configuration.
+type FunctionsConfig struct {
+	Restricted []FunctionRestriction `yaml:"restricted" mapstructure:"restricted"`
+}
+
+// FunctionRestriction defines a function that should be restricted in certain environments.
+type FunctionRestriction struct {
+	Name         string   `yaml:"name" mapstructure:"name"`
+	Environments []string `yaml:"environments" mapstructure:"environments"` // Blocked in these envs
+}
+
+// EnvironmentConfig holds per-environment configuration.
+type EnvironmentConfig struct {
+	Secrets map[string]string `yaml:"secrets" mapstructure:"secrets"`
+	PushKey string            `yaml:"push_key" mapstructure:"push_key"`
 }
 
 // GetTargetBranch returns the Supabase branch to use for a git branch.
@@ -298,5 +320,80 @@ func (c *Config) GetDeviceByName(name string) *DeviceEntry {
 func Exists() bool {
 	_, err := FindConfigFile()
 	return err == nil
+}
+
+// IsFunctionRestricted checks if a function is restricted in the given environment.
+func (c *Config) IsFunctionRestricted(functionName, environment string) bool {
+	for _, r := range c.Supabase.Functions.Restricted {
+		if r.Name == functionName {
+			for _, env := range r.Environments {
+				if env == environment {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// GetRestrictedFunctions returns a list of function names restricted in the given environment.
+func (c *Config) GetRestrictedFunctions(environment string) []string {
+	var restricted []string
+	for _, r := range c.Supabase.Functions.Restricted {
+		for _, env := range r.Environments {
+			if env == environment {
+				restricted = append(restricted, r.Name)
+				break
+			}
+		}
+	}
+	return restricted
+}
+
+// GetEnvironmentConfig returns the configuration for a specific environment.
+func (c *Config) GetEnvironmentConfig(environment string) *EnvironmentConfig {
+	if c.Environments == nil {
+		return nil
+	}
+	if env, ok := c.Environments[environment]; ok {
+		return &env
+	}
+	return nil
+}
+
+// GetEnvironmentSecrets returns the secrets for a specific environment.
+func (c *Config) GetEnvironmentSecrets(environment string) map[string]string {
+	envCfg := c.GetEnvironmentConfig(environment)
+	if envCfg == nil {
+		return nil
+	}
+	return envCfg.Secrets
+}
+
+// GetEnvironmentPushKey returns the push key path for a specific environment.
+func (c *Config) GetEnvironmentPushKey(environment string) string {
+	envCfg := c.GetEnvironmentConfig(environment)
+	if envCfg == nil {
+		return ""
+	}
+	return envCfg.PushKey
+}
+
+// IsVerbose returns whether verbose mode is enabled in preferences.
+func (c *Config) IsVerbose() bool {
+	return c.Preferences.Verbose
+}
+
+// GetEditor returns the preferred editor from preferences.
+func (c *Config) GetEditor() string {
+	if c.Preferences.Editor != "" {
+		return c.Preferences.Editor
+	}
+	return "code" // Default to VS Code
+}
+
+// ShouldAutoOpenWorktree returns whether worktrees should auto-open after creation.
+func (c *Config) ShouldAutoOpenWorktree() bool {
+	return c.Preferences.AutoOpenWorktree
 }
 

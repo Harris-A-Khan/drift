@@ -65,6 +65,20 @@ func (r *DefaultRunner) RunInteractive(ctx context.Context, name string, args ..
 	return err
 }
 
+// VerboseLog logs a message if verbose mode is enabled.
+// Use this for non-shell operations that should be visible in verbose mode.
+func VerboseLog(format string, args ...interface{}) {
+	if verboseMode {
+		msg := fmt.Sprintf(format, args...)
+		fmt.Printf("\033[90m→ %s\033[0m\n", msg)
+	}
+}
+
+// VerboseLogf is an alias for VerboseLog for consistency.
+func VerboseLogf(format string, args ...interface{}) {
+	VerboseLog(format, args...)
+}
+
 // runCmd is the internal function that executes commands.
 func runCmd(ctx context.Context, dir string, env map[string]string, interactive bool, name string, args ...string) (*Result, error) {
 	// Log command if verbose mode is enabled
@@ -77,17 +91,24 @@ func runCmd(ctx context.Context, dir string, env map[string]string, interactive 
 				if strings.Contains(arg, "://") && strings.Contains(arg, "@") {
 					// Mask password in connection strings
 					maskedArgs[i] = maskConnectionString(arg)
+				} else if isSensitiveArg(arg) {
+					maskedArgs[i] = "****"
 				} else {
 					maskedArgs[i] = arg
 				}
 			}
 			cmdStr = fmt.Sprintf("%s %s", name, strings.Join(maskedArgs, " "))
 		}
-		if dir != "" {
-			fmt.Printf("\033[90m$ cd %s && %s\033[0m\n", dir, cmdStr)
-		} else {
-			fmt.Printf("\033[90m$ %s\033[0m\n", cmdStr)
+
+		// Get working directory
+		workDir := dir
+		if workDir == "" {
+			workDir, _ = os.Getwd()
 		}
+
+		// Show command with context
+		fmt.Printf("\033[90m[%s]\033[0m\n", workDir)
+		fmt.Printf("\033[90m$ %s\033[0m\n", cmdStr)
 	}
 
 	start := time.Now()
@@ -125,15 +146,20 @@ func runCmd(ctx context.Context, dir string, env map[string]string, interactive 
 
 	// Log result if verbose mode is enabled
 	if verboseMode && !interactive {
+		// Show duration
+		fmt.Printf("\033[90m→ completed in %s\033[0m", result.Duration.Round(time.Millisecond))
+
 		if result.Stdout != "" {
 			// Only show first few lines of output in verbose mode
 			lines := strings.Split(result.Stdout, "\n")
 			if len(lines) > 5 {
-				fmt.Printf("\033[90m→ (%d lines of output)\033[0m\n", len(lines))
+				fmt.Printf("\033[90m (%d lines of output)\033[0m", len(lines))
 			}
 		}
+		fmt.Println()
+
 		if result.Stderr != "" && err != nil {
-			fmt.Printf("\033[91m→ %s\033[0m\n", truncateString(result.Stderr, 200))
+			fmt.Printf("\033[91m→ error: %s\033[0m\n", truncateString(result.Stderr, 200))
 		}
 	}
 
@@ -170,6 +196,26 @@ func maskConnectionString(connStr string) string {
 		}
 	}
 	return connStr
+}
+
+// isSensitiveArg checks if an argument looks like it contains sensitive data.
+func isSensitiveArg(arg string) bool {
+	lowerArg := strings.ToLower(arg)
+	sensitivePatterns := []string{
+		"password=",
+		"secret=",
+		"token=",
+		"api_key=",
+		"apikey=",
+		"auth=",
+		"key=",
+	}
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(lowerArg, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // truncateString truncates a string to maxLen characters.

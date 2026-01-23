@@ -282,3 +282,97 @@ func sanitizeBranchName(branch string) string {
 	return name
 }
 
+// GetAheadBehind returns the number of commits ahead and behind origin for a branch.
+func GetAheadBehind(wtPath, branch string) (ahead, behind int, err error) {
+	// Fetch first to get latest
+	_, _ = shell.RunInDir(wtPath, "git", "fetch", "origin", branch, "--quiet")
+
+	// Get rev-list counts
+	result, err := shell.RunInDir(wtPath, "git", "rev-list", "--left-right", "--count", fmt.Sprintf("%s...origin/%s", branch, branch))
+	if err != nil {
+		return 0, 0, err
+	}
+
+	output := strings.TrimSpace(result.Stdout)
+	parts := strings.Fields(output)
+	if len(parts) >= 2 {
+		fmt.Sscanf(parts[0], "%d", &ahead)
+		fmt.Sscanf(parts[1], "%d", &behind)
+	}
+
+	return ahead, behind, nil
+}
+
+// GetUncommittedChanges returns the count of uncommitted changes in a worktree.
+func GetUncommittedChanges(wtPath string) (int, error) {
+	result, err := shell.RunInDir(wtPath, "git", "status", "--porcelain")
+	if err != nil {
+		return 0, err
+	}
+
+	output := strings.TrimSpace(result.Stdout)
+	if output == "" {
+		return 0, nil
+	}
+
+	lines := strings.Split(output, "\n")
+	return len(lines), nil
+}
+
+// GetMergedBranches returns branches that have been merged into main/master.
+func GetMergedBranches() ([]string, error) {
+	// Determine main branch
+	mainBranch := "main"
+	if !BranchExists("main") && BranchExists("master") {
+		mainBranch = "master"
+	}
+
+	result, err := shell.Run("git", "branch", "--merged", mainBranch)
+	if err != nil {
+		return nil, err
+	}
+
+	var merged []string
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		line = strings.TrimSpace(line)
+		// Remove the * prefix for current branch
+		line = strings.TrimPrefix(line, "* ")
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and main/master
+		if line == "" || line == "main" || line == "master" || line == "development" {
+			continue
+		}
+
+		merged = append(merged, line)
+	}
+
+	return merged, nil
+}
+
+// PullInWorktree performs a git pull in the specified worktree.
+func PullInWorktree(wtPath string) error {
+	result, err := shell.RunInDir(wtPath, "git", "pull", "--quiet")
+	if err != nil {
+		errMsg := result.Stderr
+		if errMsg == "" && result.Stdout != "" {
+			errMsg = result.Stdout
+		}
+		return fmt.Errorf("%s", strings.TrimSpace(errMsg))
+	}
+	return nil
+}
+
+// DeleteRemoteBranch deletes a branch on the remote.
+func DeleteRemoteBranch(remote, branch string) error {
+	result, err := shell.Run("git", "push", remote, "--delete", branch)
+	if err != nil {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return fmt.Errorf("failed to delete remote branch: %s", errMsg)
+	}
+	return nil
+}
+

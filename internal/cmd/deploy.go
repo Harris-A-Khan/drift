@@ -187,25 +187,46 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 	}
 
 	// Confirm for production
-	if info.Environment == supabase.EnvProduction && !IsYes() {
-		ui.NewLine()
-		ui.Warning("You are about to deploy to PRODUCTION!")
-		confirmed, err := ui.PromptYesNo("Continue?", false)
-		if err != nil || !confirmed {
-			ui.Info("Cancelled")
-			return nil
-		}
+	confirmed, err := ConfirmProductionOperation(info.Environment, "deploy Edge Functions")
+	if err != nil || !confirmed {
+		return nil
 	}
 
 	ui.NewLine()
 
 	// List functions
-	functions, err := supabase.ListFunctions(cfg.GetFunctionsPath())
+	allFunctions, err := supabase.ListFunctions(cfg.GetFunctionsPath())
 	if err != nil {
 		return err
 	}
 
+	// Filter out restricted functions for this environment
+	var functions []supabase.Function
+	var skippedFunctions []string
+	envName := string(info.Environment)
+
+	for _, fn := range allFunctions {
+		if cfg.IsFunctionRestricted(fn.Name, envName) {
+			skippedFunctions = append(skippedFunctions, fn.Name)
+		} else {
+			functions = append(functions, fn)
+		}
+	}
+
+	if len(skippedFunctions) > 0 {
+		ui.Warningf("Skipping %d restricted function(s) for %s:", len(skippedFunctions), envName)
+		for _, fn := range skippedFunctions {
+			ui.List(ui.Dim(fn))
+		}
+		ui.NewLine()
+	}
+
 	ui.Infof("Found %d functions to deploy", len(functions))
+
+	if len(functions) == 0 {
+		ui.Info("No functions to deploy")
+		return nil
+	}
 
 	// Deploy each function
 	client := supabase.NewClient()
@@ -270,30 +291,37 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	}
 
 	// Confirm for production
-	if info.Environment == supabase.EnvProduction && !IsYes() {
-		ui.NewLine()
-		ui.Warning("You are about to set secrets on PRODUCTION!")
-		confirmed, err := ui.PromptYesNo("Continue?", false)
-		if err != nil || !confirmed {
-			ui.Info("Cancelled")
-			return nil
-		}
+	confirmed, err := ConfirmProductionOperation(info.Environment, "set secrets")
+	if err != nil || !confirmed {
+		return nil
 	}
 
 	ui.NewLine()
 
 	client := supabase.NewClient()
 
-	// Load APNs secrets
+	// Check for per-environment configuration
+	envName := string(info.Environment)
+	envConfig := cfg.GetEnvironmentConfig(envName)
+
+	// Determine APNs settings
 	apnsEnv := cfg.Apple.PushEnvironment
+	pushKeyPattern := cfg.Apple.PushKeyPattern
+
 	if info.Environment == supabase.EnvProduction {
 		apnsEnv = "production"
+	}
+
+	// Override with per-environment push key if configured
+	if envConfig != nil && envConfig.PushKey != "" {
+		pushKeyPattern = envConfig.PushKey
+		ui.Infof("Using per-environment push key: %s", pushKeyPattern)
 	}
 
 	apnsSecrets, err := supabase.LoadAPNSSecretsFromConfig(
 		cfg.Apple.TeamID,
 		cfg.Apple.BundleID,
-		cfg.Apple.PushKeyPattern,
+		pushKeyPattern,
 		apnsEnv,
 		cfg.ProjectRoot(),
 	)
@@ -310,6 +338,21 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 		}
 
 		sp.Success("Set APNs secrets")
+	}
+
+	// Set per-environment secrets if configured
+	if envConfig != nil && len(envConfig.Secrets) > 0 {
+		sp = ui.NewSpinner(fmt.Sprintf("Setting %d per-environment secrets", len(envConfig.Secrets)))
+		sp.Start()
+
+		for key, value := range envConfig.Secrets {
+			if err := client.SetSecret(info.ProjectRef, key, value); err != nil {
+				sp.Fail(fmt.Sprintf("Failed to set secret %s", key))
+				return err
+			}
+		}
+
+		sp.Success(fmt.Sprintf("Set %d per-environment secrets", len(envConfig.Secrets)))
 	}
 
 	// Set debug switch (only for non-production)

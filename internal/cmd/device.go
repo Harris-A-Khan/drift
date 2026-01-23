@@ -101,16 +101,26 @@ Examples:
 	RunE: runDeviceRun,
 }
 
+var deviceSimulatorsCmd = &cobra.Command{
+	Use:   "simulators",
+	Short: "List available iOS simulators",
+	Long:  `List all available iOS simulators that can be used for building and testing.`,
+	RunE:  runDeviceSimulators,
+}
+
 var (
-	deviceQuickFlag  bool
-	deviceSchemeFlag string
-	deviceRunFlag    bool
+	deviceQuickFlag     bool
+	deviceSchemeFlag    string
+	deviceRunFlag       bool
+	deviceSimulatorFlag string
 )
 
 func init() {
 	deviceStartCmd.Flags().BoolVarP(&deviceQuickFlag, "quick", "q", false, "Skip rebuild if WDA is already running")
 	deviceBuildCmd.Flags().StringVarP(&deviceSchemeFlag, "scheme", "s", "", "Xcode scheme to build")
 	deviceBuildCmd.Flags().BoolVarP(&deviceRunFlag, "run", "r", false, "Run app after installing")
+	deviceBuildCmd.Flags().StringVar(&deviceSimulatorFlag, "simulator", "", "Build for simulator (use device name or 'default' for iPhone 16 Pro)")
+	deviceRunCmd.Flags().StringVar(&deviceSimulatorFlag, "simulator", "", "Build and run on simulator (use device name or 'default')")
 
 	deviceCmd.AddCommand(deviceListCmd)
 	deviceCmd.AddCommand(deviceStartCmd)
@@ -118,6 +128,7 @@ func init() {
 	deviceCmd.AddCommand(deviceStatusCmd)
 	deviceCmd.AddCommand(deviceBuildCmd)
 	deviceCmd.AddCommand(deviceRunCmd)
+	deviceCmd.AddCommand(deviceSimulatorsCmd)
 	rootCmd.AddCommand(deviceCmd)
 }
 
@@ -575,6 +586,11 @@ func runDeviceBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("device build is only available for iOS projects")
 	}
 
+	// Check if building for simulator
+	if deviceSimulatorFlag != "" {
+		return runSimulatorBuild(cmd, args, cfg)
+	}
+
 	ui.Header("Build to Device")
 
 	// Select device
@@ -863,4 +879,334 @@ func parseXcodeSchemesText(output string) []string {
 	}
 
 	return schemes
+}
+
+// Simulator represents an iOS simulator.
+type Simulator struct {
+	UDID        string `json:"udid"`
+	Name        string `json:"name"`
+	DeviceType  string `json:"deviceTypeIdentifier"`
+	State       string `json:"state"`
+	IsAvailable bool   `json:"isAvailable"`
+	Runtime     string `json:"-"` // Parsed from runtime key
+}
+
+// getSimulators returns available iOS simulators.
+func getSimulators() ([]Simulator, error) {
+	result, err := shell.Run("xcrun", "simctl", "list", "devices", "-j")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list simulators: %w", err)
+	}
+
+	var output struct {
+		Devices map[string][]Simulator `json:"devices"`
+	}
+
+	if err := json.Unmarshal([]byte(result.Stdout), &output); err != nil {
+		return nil, fmt.Errorf("failed to parse simulator list: %w", err)
+	}
+
+	var simulators []Simulator
+	for runtime, devices := range output.Devices {
+		// Only include iOS simulators
+		if !strings.Contains(runtime, "iOS") {
+			continue
+		}
+
+		// Extract iOS version from runtime
+		// Format: com.apple.CoreSimulator.SimRuntime.iOS-17-5
+		iosVersion := ""
+		if idx := strings.LastIndex(runtime, "iOS-"); idx != -1 {
+			iosVersion = strings.ReplaceAll(runtime[idx+4:], "-", ".")
+		}
+
+		for _, sim := range devices {
+			if sim.IsAvailable {
+				sim.Runtime = iosVersion
+				simulators = append(simulators, sim)
+			}
+		}
+	}
+
+	return simulators, nil
+}
+
+// selectSimulator shows an interactive picker for available simulators.
+func selectSimulator(prompt string) (*Simulator, error) {
+	simulators, err := getSimulators()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(simulators) == 0 {
+		return nil, fmt.Errorf("no simulators available\n\nCreate one in Xcode: Window > Devices and Simulators")
+	}
+
+	// Group by common device types for easier selection
+	options := make([]string, len(simulators))
+	for i, sim := range simulators {
+		stateIcon := ""
+		if sim.State == "Booted" {
+			stateIcon = ui.Green(" (running)")
+		}
+		options[i] = fmt.Sprintf("%s - iOS %s%s", sim.Name, sim.Runtime, stateIcon)
+	}
+
+	idx, _, err := ui.PromptSelectWithIndex(prompt, options)
+	if err != nil {
+		return nil, err
+	}
+
+	return &simulators[idx], nil
+}
+
+// findSimulatorByName finds a simulator by name (partial match supported).
+func findSimulatorByName(name string) (*Simulator, error) {
+	simulators, err := getSimulators()
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle default
+	if name == "default" || name == "" {
+		// Find iPhone 16 Pro or similar
+		defaultNames := []string{"iPhone 16 Pro", "iPhone 15 Pro", "iPhone 14 Pro", "iPhone"}
+		for _, defaultName := range defaultNames {
+			for i, sim := range simulators {
+				if strings.Contains(sim.Name, defaultName) {
+					return &simulators[i], nil
+				}
+			}
+		}
+		// Just return the first one
+		if len(simulators) > 0 {
+			return &simulators[0], nil
+		}
+		return nil, fmt.Errorf("no simulators available")
+	}
+
+	// Exact match first
+	for i, sim := range simulators {
+		if sim.Name == name {
+			return &simulators[i], nil
+		}
+	}
+
+	// Partial match
+	nameLower := strings.ToLower(name)
+	for i, sim := range simulators {
+		if strings.Contains(strings.ToLower(sim.Name), nameLower) {
+			return &simulators[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("simulator '%s' not found", name)
+}
+
+// bootSimulatorIfNeeded boots a simulator if it's not already running.
+func bootSimulatorIfNeeded(sim *Simulator) error {
+	if sim.State == "Booted" {
+		return nil
+	}
+
+	ui.Infof("Booting simulator: %s", sim.Name)
+	_, err := shell.Run("xcrun", "simctl", "boot", sim.UDID)
+	if err != nil {
+		return fmt.Errorf("failed to boot simulator: %w", err)
+	}
+
+	// Give it a moment to start
+	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// runSimulatorBuild handles building and running on iOS simulators.
+func runSimulatorBuild(cmd *cobra.Command, args []string, cfg *config.Config) error {
+	ui.Header("Build to Simulator")
+
+	// Select or find simulator
+	var sim *Simulator
+	var err error
+
+	if deviceSimulatorFlag == "default" || deviceSimulatorFlag == "" {
+		sim, err = findSimulatorByName("default")
+	} else {
+		sim, err = findSimulatorByName(deviceSimulatorFlag)
+	}
+
+	if err != nil {
+		// If not found by name, show picker
+		sim, err = selectSimulator("Select simulator")
+		if err != nil {
+			return err
+		}
+	}
+
+	ui.NewLine()
+	ui.KeyValue("Simulator", ui.Cyan(sim.Name))
+	ui.KeyValue("iOS", sim.Runtime)
+	ui.KeyValue("State", sim.State)
+
+	// Find Xcode project/workspace
+	projectRoot := cfg.ProjectRoot()
+	var xcodeFile string
+	var xcodeType string
+
+	workspaces, _ := filepath.Glob(filepath.Join(projectRoot, "*.xcworkspace"))
+	if len(workspaces) > 0 {
+		xcodeFile = workspaces[0]
+		xcodeType = "workspace"
+	} else {
+		projects, _ := filepath.Glob(filepath.Join(projectRoot, "*.xcodeproj"))
+		if len(projects) > 0 {
+			xcodeFile = projects[0]
+			xcodeType = "project"
+		}
+	}
+
+	if xcodeFile == "" {
+		return fmt.Errorf("no Xcode project or workspace found in %s", projectRoot)
+	}
+
+	ui.KeyValue("Project", filepath.Base(xcodeFile))
+
+	// Get or select scheme
+	scheme := deviceSchemeFlag
+	if scheme == "" {
+		schemes, err := getXcodeSchemes(xcodeFile, xcodeType)
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Could not list schemes: %v", err))
+			scheme, err = ui.PromptString("Enter scheme name", "")
+			if err != nil {
+				return err
+			}
+		} else if len(schemes) == 1 {
+			scheme = schemes[0]
+			ui.KeyValue("Scheme", scheme)
+		} else {
+			idx, _, err := ui.PromptSelectWithIndex("Select scheme", schemes)
+			if err != nil {
+				return err
+			}
+			scheme = schemes[idx]
+		}
+	} else {
+		ui.KeyValue("Scheme", scheme)
+	}
+
+	ui.NewLine()
+
+	// Confirm
+	if !IsYes() {
+		confirmed, _ := ui.PromptYesNo("Build for simulator?", true)
+		if !confirmed {
+			ui.Info("Cancelled")
+			return nil
+		}
+	}
+
+	// Boot simulator if needed
+	if err := bootSimulatorIfNeeded(sim); err != nil {
+		ui.Warning(fmt.Sprintf("Could not boot simulator: %v", err))
+	}
+
+	ui.NewLine()
+
+	// Build for simulator
+	destination := fmt.Sprintf("platform=iOS Simulator,name=%s", sim.Name)
+	buildArgs := []string{
+		fmt.Sprintf("-%s", xcodeType), xcodeFile,
+		"-scheme", scheme,
+		"-destination", destination,
+		"-configuration", "Debug",
+	}
+
+	if deviceRunFlag {
+		buildArgs = append(buildArgs, "build")
+		ui.Info("Building for simulator...")
+	} else {
+		buildArgs = append(buildArgs, "build")
+		ui.Info("Building for simulator...")
+	}
+
+	// Run xcodebuild interactively
+	buildCmd := exec.Command("xcodebuild", buildArgs...)
+	buildCmd.Dir = projectRoot
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	buildCmd.Stdin = os.Stdin
+
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("build failed: %w", err)
+	}
+
+	ui.NewLine()
+	ui.Success("Build complete!")
+
+	if deviceRunFlag {
+		ui.NewLine()
+		ui.Info("Opening Simulator...")
+		shell.RunInteractive("open", "-a", "Simulator")
+
+		ui.Info("The app should launch automatically in the simulator")
+	}
+
+	return nil
+}
+
+func runDeviceSimulators(cmd *cobra.Command, args []string) error {
+	ui.Header("iOS Simulators")
+
+	simulators, err := getSimulators()
+	if err != nil {
+		return err
+	}
+
+	if len(simulators) == 0 {
+		ui.Info("No simulators found")
+		ui.NewLine()
+		ui.Info("Create one in Xcode: Window > Devices and Simulators")
+		return nil
+	}
+
+	// Group by runtime
+	byRuntime := make(map[string][]Simulator)
+	for _, sim := range simulators {
+		byRuntime[sim.Runtime] = append(byRuntime[sim.Runtime], sim)
+	}
+
+	// Get sorted runtime versions
+	var runtimes []string
+	for r := range byRuntime {
+		runtimes = append(runtimes, r)
+	}
+	// Sort in reverse (newest first)
+	for i, j := 0, len(runtimes)-1; i < j; i, j = i+1, j-1 {
+		runtimes[i], runtimes[j] = runtimes[j], runtimes[i]
+	}
+
+	for _, runtime := range runtimes {
+		sims := byRuntime[runtime]
+		ui.SubHeader(fmt.Sprintf("iOS %s", runtime))
+
+		for _, sim := range sims {
+			stateIcon := ui.Dim("○")
+			if sim.State == "Booted" {
+				stateIcon = ui.Green("●")
+			}
+			fmt.Printf("  %s %s\n", stateIcon, sim.Name)
+		}
+		ui.NewLine()
+	}
+
+	ui.Infof("Total: %d simulators available", len(simulators))
+
+	// Show usage hints
+	ui.NewLine()
+	ui.SubHeader("Usage")
+	ui.List("drift device build --simulator                    # Build for default simulator")
+	ui.List("drift device build --simulator \"iPhone 16 Pro\"    # Build for specific simulator")
+	ui.List("drift device run --simulator                      # Build, install, and run")
+
+	return nil
 }

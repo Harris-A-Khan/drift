@@ -70,8 +70,18 @@ func initConfig() {
 	if noColor {
 		os.Setenv("NO_COLOR", "1")
 	}
+
+	// Check verbose from flag first
 	if verbose {
 		shell.SetVerbose(true)
+		return
+	}
+
+	// Check verbose from local config preferences
+	cfg, err := config.LoadWithLocal()
+	if err == nil && cfg.IsVerbose() {
+		shell.SetVerbose(true)
+		verbose = true // Also set the flag for IsVerbose() checks
 	}
 }
 
