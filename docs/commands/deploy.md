@@ -126,6 +126,74 @@ $ drift deploy list-secrets
 → Total: 5 secrets
 ```
 
+## Per-Environment Secrets
+
+Configure environment-specific secrets in `.drift.yaml`:
+
+```yaml
+environments:
+  production:
+    secrets:
+      APNS_KEY_ID: "KEY_PROD_123"
+      STRIPE_KEY: "sk_live_xxx"
+    push_key: "AuthKey_PROD.p8"
+  development:
+    secrets:
+      APNS_KEY_ID: "KEY_DEV_456"
+      STRIPE_KEY: "sk_test_xxx"
+    push_key: "AuthKey_DEV.p8"
+```
+
+When deploying secrets, Drift automatically uses the appropriate values for each environment.
+
+**Example:**
+
+```bash
+$ drift deploy secrets
+
+╔══════════════════════════════════════════════════════════════╗
+║  Deploy Secrets                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+  Environment:      Development
+  Supabase Branch:  development
+
+───── Environment-Specific Secrets
+  Setting APNS_KEY_ID... ✓
+  Setting STRIPE_KEY... ✓
+
+───── Common Secrets
+  Setting APNS_TEAM_ID... ✓
+  Setting APNS_PRIVATE_KEY... ✓
+
+✓ Successfully set 4 secrets
+```
+
+## Function Restrictions
+
+Prevent certain functions from being deployed to specific environments:
+
+```yaml
+functions:
+  restricted:
+    - name: "dangerous-migration"
+      environments: ["production"]
+    - name: "test-helper"
+      environments: ["production", "development"]
+```
+
+When a restricted function would be deployed, Drift shows a warning and skips it:
+
+```bash
+$ drift deploy functions
+
+  Deploying hello-world... ✓
+  Skipping dangerous-migration (blocked in production)
+  Deploying send-notification... ✓
+
+⚠ 1 function skipped due to environment restrictions
+```
+
 ## Production Safeguards
 
 When deploying to production, Drift requires confirmation:
@@ -138,6 +206,17 @@ $ drift deploy all
 ```
 
 Use `--yes` or `-y` to skip confirmation (for CI/CD).
+
+### Enhanced Protection
+
+For destructive operations on production, Drift may require typing "yes" to confirm:
+
+```bash
+$ drift migrate push
+
+⚠ You are about to push migrations on PRODUCTION!
+Type 'yes' to confirm: _
+```
 
 ## See Also
 

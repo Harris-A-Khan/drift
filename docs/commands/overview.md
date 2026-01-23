@@ -16,6 +16,8 @@ drift <command> [subcommand] [flags]
 | `config` | View and modify drift configuration |
 | `env` | Environment and xcconfig management |
 | `deploy` | Edge function deployment |
+| `device` | Device builds, runs, and simulator management |
+| `xcode` | Xcode scheme management |
 | `branch` | Supabase branch management |
 | `worktree` | Git worktree management |
 | `backup` | Database backup operations |

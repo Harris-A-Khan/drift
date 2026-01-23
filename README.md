@@ -92,6 +92,8 @@ drift env setup             # Generate config for current branch
 drift env setup --branch X  # Generate for a specific Supabase branch
 drift env setup --copy-env  # Copy custom variables from another worktree
 drift env switch <branch>   # Switch to a different environment
+drift env validate          # Validate environment configuration
+drift env diff <b1> <b2>    # Compare environments between branches
 ```
 
 For iOS/macOS projects, generates `Config.xcconfig`. For web projects, generates `.env.local`.
@@ -121,9 +123,36 @@ drift wt open [branch]               # Open worktree in VS Code
 drift wt delete [branch]             # Delete a worktree
 drift wt path <branch>               # Print worktree path
 drift wt prune                       # Clean stale entries
+drift wt info [branch]               # Show detailed worktree info
+drift wt cleanup                     # Clean up merged worktrees
+drift wt sync                        # Interactive sync across worktrees
 ```
 
 The `create` command automatically copies configured files (`.env`, `.p8` keys) and generates environment config.
+
+### Device Management (`drift device`)
+
+Build, run, and manage iOS device and simulator workflows.
+
+```bash
+drift device build               # Build for connected device
+drift device build --simulator   # Build for default simulator
+drift device build --simulator "iPhone 16 Pro"
+drift device run --simulator     # Build, install, and run on simulator
+drift device simulators          # List available simulators
+drift device list                # List connected devices
+drift device start               # Start WebDriverAgent for automation
+drift device status              # Check device/WDA status
+```
+
+### Xcode Management (`drift xcode`)
+
+Manage Xcode schemes.
+
+```bash
+drift xcode schemes              # List all schemes
+drift xcode validate             # Validate configured schemes exist
+```
 
 ### Edge Functions (`drift functions`)
 
@@ -215,7 +244,25 @@ drift doctor               # Check all dependencies
 
 ## Configuration
 
-Create a `.drift.yaml` in your project root (or run `drift init`):
+Create a `.drift.yaml` in your project root (or run `drift init`).
+
+### Local Configuration
+
+Create `.drift.local.yaml` for developer-specific settings (automatically gitignored):
+
+```yaml
+supabase:
+  override_branch: "feat-my-feature"
+
+device:
+  default_device: "My iPhone"
+
+preferences:
+  verbose: true
+  editor: "cursor"
+```
+
+### Main Configuration
 
 ```yaml
 project:
@@ -241,6 +288,10 @@ apns:  # iOS/macOS only
 xcode:  # iOS/macOS only
   xcconfig_path: Config.xcconfig
   version_file: Version.xcconfig
+  schemes:
+    production: "MyApp (Production)"
+    development: "MyApp (Development)"
+    feature: "MyApp (Debug)"
 
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
@@ -254,6 +305,23 @@ worktree:
   copy_on_create:
     - .env
     - "*.p8"
+
+# Per-environment configuration
+environments:
+  production:
+    secrets:
+      APNS_KEY_ID: "KEY_PROD_123"
+    push_key: "AuthKey_PROD.p8"
+  development:
+    secrets:
+      APNS_KEY_ID: "KEY_DEV_456"
+    push_key: "AuthKey_DEV.p8"
+
+# Function deployment restrictions
+functions:
+  restricted:
+    - name: "dangerous-function"
+      environments: ["production"]
 ```
 
 ## Environment Variables

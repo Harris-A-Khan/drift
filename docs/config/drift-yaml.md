@@ -190,6 +190,51 @@ backup:
 |-------|-------------|---------|
 | `bucket` | Supabase Storage bucket | `database-backups` |
 
+### environments
+
+Configure environment-specific settings for production and development:
+
+```yaml
+environments:
+  production:
+    secrets:
+      APNS_KEY_ID: "KEY_PROD_123"
+      STRIPE_KEY: "sk_live_xxx"
+      CUSTOM_SECRET: "value"
+    push_key: "AuthKey_PROD.p8"
+  development:
+    secrets:
+      APNS_KEY_ID: "KEY_DEV_456"
+      STRIPE_KEY: "sk_test_xxx"
+    push_key: "AuthKey_DEV.p8"
+```
+
+| Field | Description |
+|-------|-------------|
+| `secrets` | Key-value map of secrets specific to this environment |
+| `push_key` | APNs .p8 key file for this environment |
+
+When running `drift deploy secrets`, the appropriate environment-specific secrets are automatically used.
+
+### functions
+
+Configure function deployment behavior:
+
+```yaml
+functions:
+  restricted:
+    - name: "dangerous-function"
+      environments: ["production"]
+    - name: "test-helper"
+      environments: ["production", "development"]
+```
+
+| Field | Description |
+|-------|-------------|
+| `restricted` | List of functions with deployment restrictions |
+| `restricted[].name` | Function name (directory name in supabase/functions) |
+| `restricted[].environments` | Environments where this function should NOT be deployed |
+
 ## Minimal Configuration
 
 The minimum required configuration:

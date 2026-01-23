@@ -34,27 +34,38 @@ make deps                     # go mod download
 
 ```
 cmd/drift/main.go        → Entry point, injects version via ldflags
-internal/cmd/            → Cobra command implementations (root, env, worktree, deploy, db, migrate, backup, build, doctor, init)
+internal/cmd/            → Cobra command implementations (root, env, worktree, deploy, db, migrate, backup, build, doctor, init, device, xcode)
+internal/cmd/protection.go → Production protection helpers (confirmation prompts)
 internal/config/         → .drift.yaml loading, defaults, merging
+internal/config/local.go → .drift.local.yaml handling (developer-specific settings)
 internal/git/            → Git operations (repo, branch, worktree management)
 internal/database/       → pg_dump/pg_restore wrappers
 internal/supabase/       → Supabase CLI/API interactions (branches, functions, secrets, storage)
 internal/ui/             → Terminal UI (colors, spinners, prompts, tables)
 internal/xcode/          → xcconfig generation, version file management
+internal/xcode/schemes.go → Xcode scheme management and validation
 pkg/shell/               → Shell command execution with context support
 ```
 
 ### Key Design Patterns
 
-1. **Shell abstraction**: `pkg/shell` provides `Run()`, `RunInDir()`, `RunWithEnv()`, `RunWithTimeout()` - all return `*Result` with stdout, stderr, exit code, and duration. Use `Runner` interface for testability.
+1. **Shell abstraction**: `pkg/shell` provides `Run()`, `RunInDir()`, `RunWithEnv()`, `RunWithTimeout()` - all return `*Result` with stdout, stderr, exit code, and duration. Use `Runner` interface for testability. Enhanced verbose mode shows command output in real-time.
 
 2. **Config loading**: `config.Load()` searches up directory tree for `.drift.yaml`/`.drift.yml`. `MergeWithDefaults()` fills missing values. Access paths via `cfg.GetFunctionsPath()`, etc.
 
-3. **Git worktree naming**: `GetWorktreePath(project, branch, pattern)` uses `{project}-{branch}` pattern. Branch names are sanitized (slashes → hyphens).
+3. **Split configuration**: `.drift.yaml` for team settings (committed), `.drift.local.yaml` for developer-specific settings (gitignored). Use `config.LoadWithLocal()` to load both and merge.
 
-4. **Environment mapping**: Git branches map to Supabase environments. `main`/`master` → production, `dev`/`development` → development, others → feature branches.
+4. **Git worktree naming**: `GetWorktreePath(project, branch, pattern)` uses `{project}-{branch}` pattern. Branch names are sanitized (slashes → hyphens).
 
-5. **Protected branches**: Defined in config, checked before destructive operations on production.
+5. **Environment mapping**: Git branches map to Supabase environments. `main`/`master` → production, `dev`/`development` → development, others → feature branches.
+
+6. **Protected branches**: Defined in config, checked before destructive operations on production.
+
+7. **Production protection**: Use `ConfirmProductionOperation()` for standard confirmations, `RequireProductionConfirmation()` for strict confirmations requiring "yes" input. Both respect `--yes` flag for automation.
+
+8. **Per-environment configuration**: `cfg.Environments` map holds environment-specific secrets and push keys. Access via `cfg.Environments["production"].Secrets`.
+
+9. **Function restrictions**: `cfg.Functions.Restricted` lists functions blocked from certain environments. Check before deployment.
 
 ### Command Flow
 

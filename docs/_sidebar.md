@@ -10,6 +10,8 @@
   - [env](commands/env.md)
   - [worktree](commands/worktree.md)
   - [deploy](commands/deploy.md)
+  - [device](commands/device.md)
+  - [xcode](commands/xcode.md)
   - [branch](commands/branch.md)
   - [backup](commands/backup.md)
   - [storage](commands/storage.md)
@@ -17,6 +19,7 @@
 
 - **Configuration**
   - [.drift.yaml](config/drift-yaml.md)
+  - [.drift.local.yaml](config/local-config.md)
   - [Environment Variables](config/environment.md)
 
 - **Guides**

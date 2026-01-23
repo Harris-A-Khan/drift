@@ -19,6 +19,9 @@ drift wt <subcommand> [flags]  # Short alias
 | `open` | Open a worktree in VS Code, Finder, or Terminal |
 | `path` | Print the absolute path to a worktree |
 | `prune` | Clean stale worktree entries |
+| `info` | Show detailed worktree info (ahead/behind, changes) |
+| `cleanup` | Clean up merged worktrees interactively |
+| `sync` | Interactive multi-select sync across worktrees |
 
 ## What Are Worktrees?
 
@@ -190,6 +193,119 @@ Remove stale worktree entries for worktrees that no longer exist on disk.
 
 ```bash
 drift worktree prune
+```
+
+## drift worktree info
+
+Show detailed information about a worktree.
+
+```bash
+drift worktree info [branch]
+```
+
+If no branch is specified, shows info for the current worktree.
+
+**Information Shown:**
+
+- Commits ahead/behind origin
+- Uncommitted changes count
+- Supabase branch mapping
+- Environment (production/development/feature)
+
+**Example Output:**
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  Worktree Info: feat/new-feature                             ║
+╚══════════════════════════════════════════════════════════════╝
+
+  Path:           /path/to/project-feat-new-feature
+  Branch:         feat/new-feature
+  Environment:    Feature
+
+───── Git Status
+  Ahead:          3 commits
+  Behind:         0 commits
+  Uncommitted:    2 files modified
+
+───── Supabase
+  Branch:         feat-new-feature
+  Project Ref:    abcdefghij
+```
+
+## drift worktree cleanup
+
+Find and delete worktrees for branches that have been merged into main.
+
+```bash
+drift worktree cleanup
+```
+
+This command:
+
+1. Detects branches merged into main/master
+2. Shows which worktrees can be safely deleted
+3. Prompts for confirmation before each deletion
+4. Optionally deletes the remote branch as well
+
+**Example:**
+
+```bash
+$ drift worktree cleanup
+
+╔══════════════════════════════════════════════════════════════╗
+║  Cleanup Merged Worktrees                                    ║
+╚══════════════════════════════════════════════════════════════╝
+
+Found 2 worktrees for merged branches:
+
+  feat/old-feature      merged 3 days ago
+  fix/resolved-bug      merged 1 week ago
+
+? Delete worktree for feat/old-feature? [y/N] y
+  ✓ Deleted worktree
+? Also delete remote branch? [y/N] y
+  ✓ Deleted remote branch
+
+? Delete worktree for fix/resolved-bug? [y/N] n
+  Skipped
+```
+
+## drift worktree sync
+
+Interactively select worktrees to sync with their remote branches.
+
+```bash
+drift worktree sync
+```
+
+Shows all worktrees with checkboxes for selection. For each selected worktree, pulls the latest changes from origin.
+
+**Example:**
+
+```bash
+$ drift worktree sync
+
+╔══════════════════════════════════════════════════════════════╗
+║  Sync Worktrees                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+Select worktrees to sync:
+  [x] main           (2 behind)
+  [x] development    (5 behind)
+  [ ] feat/my-work   (0 behind, 3 uncommitted)
+  [x] feat/other     (1 behind)
+
+Syncing main...
+  ✓ Pulled 2 commits
+
+Syncing development...
+  ✓ Pulled 5 commits
+
+Syncing feat/other...
+  ✓ Pulled 1 commit
+
+✓ Synced 3 worktrees
 ```
 
 ## Typical Workflow

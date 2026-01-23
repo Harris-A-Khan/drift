@@ -15,6 +15,8 @@ drift env <subcommand> [flags]
 | `show` | Show current environment info |
 | `setup` | Generate Config.xcconfig for current branch |
 | `switch` | Generate xcconfig for a specific Supabase branch |
+| `validate` | Validate environment configuration |
+| `diff` | Compare environments between branches |
 
 ## drift env show
 
@@ -126,6 +128,101 @@ drift env switch <branch>
 ```bash
 # Generate config for production while on a feature branch
 drift env switch main
+```
+
+## drift env validate
+
+Perform comprehensive validation of your environment configuration.
+
+```bash
+drift env validate
+```
+
+**Validation Checks:**
+
+1. Config file exists and is valid YAML
+2. Required Supabase credentials are set (`SUPABASE_URL`, `SUPABASE_ANON_KEY`)
+3. Drift markers are intact (`=== DRIFT MANAGED ===`)
+4. Configured Xcode schemes exist (if applicable)
+5. DB_SCHEMA_VERSION matches latest migration (optional)
+
+**Example Output (Success):**
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  Environment Validation                                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+───── Config File
+  ✓ Config.xcconfig exists
+  ✓ Drift markers intact
+
+───── Supabase Credentials
+  ✓ SUPABASE_URL set
+  ✓ SUPABASE_ANON_KEY set
+  ✓ SUPABASE_PROJECT_REF set
+
+───── Xcode Schemes
+  ✓ production: MyApp (Production)
+  ✓ development: MyApp (Development)
+  ✓ feature: MyApp (Debug)
+
+✓ All validation checks passed
+```
+
+**Example Output (Errors):**
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  Environment Validation                                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+───── Config File
+  ✓ Config.xcconfig exists
+  ✗ Drift markers missing or corrupt
+
+───── Supabase Credentials
+  ✓ SUPABASE_URL set
+  ✗ SUPABASE_ANON_KEY missing
+
+⚠ 2 validation errors found
+  Run 'drift env setup' to regenerate configuration
+```
+
+## drift env diff
+
+Compare environment configuration between two branches.
+
+```bash
+drift env diff <branch1> <branch2>
+```
+
+Shows differences in:
+- Supabase URL and Project Ref
+- API keys (masked for security)
+- Custom variables
+
+**Example:**
+
+```bash
+$ drift env diff main development
+
+╔══════════════════════════════════════════════════════════════╗
+║  Environment Comparison                                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+                    main                    development
+  ─────────────────────────────────────────────────────────────
+  Environment       Production              Development
+  Project Ref       abcdefghij              klmnopqrst
+  SUPABASE_URL      https://abc...          https://klm...
+  SUPABASE_ANON_KEY eyJ...abc               eyJ...xyz
+
+───── Custom Variables
+  DEBUG_SWITCH      (not set)               true
+  FEATURE_FLAG      enabled                 enabled
+
+→ 3 differences found
 ```
 
 ## Environment Types

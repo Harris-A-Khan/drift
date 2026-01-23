@@ -184,6 +184,61 @@ xcode:
     feature: MyApp
 ```
 
+## Scheme Management
+
+Use the `drift xcode` commands to manage and validate schemes.
+
+### Listing Schemes
+
+List all available schemes in your project:
+
+```bash
+drift xcode schemes
+```
+
+This scans both `.xcodeproj` and `.xcworkspace` files and shows:
+- Shared schemes (recommended, committed to git)
+- Personal schemes (local only)
+
+### Validating Schemes
+
+Before deploying or building, validate that configured schemes exist:
+
+```bash
+drift xcode validate
+```
+
+This checks that all schemes in your `.drift.yaml` are present in the Xcode project.
+
+### Auto-Detection During Init
+
+When running `drift init`, Drift automatically scans for available schemes and can suggest mappings:
+
+1. **Production**: Schemes containing "Production", "Release", or "Prod"
+2. **Development**: Schemes containing "Development", "Dev", or "Staging"
+3. **Feature**: Default or Debug schemes
+
+**Example:**
+
+```bash
+$ drift init
+
+  ...
+
+───── Xcode Schemes
+  Found 3 schemes in MyApp.xcodeproj:
+    • MyApp (Production)
+    • MyApp (Development)
+    • MyApp (Debug)
+
+  Suggested mappings:
+    production:  MyApp (Production)
+    development: MyApp (Development)
+    feature:     MyApp (Debug)
+
+? Use suggested scheme mappings? [Y/n]
+```
+
 ## See Also
 
 - [Environment Management](../commands/env.md)
