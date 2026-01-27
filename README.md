@@ -330,15 +330,15 @@ functions:
 |----------|-------------|--------------|
 | `SUPABASE_ACCESS_TOKEN` | Supabase access token for API access | CI/CD, secrets copy |
 | `SUPABASE_DB_PASSWORD` | Database password for migrations | migrate push/history |
-| `PROD_PASSWORD` | Production database password | db dump/push |
-| `DEV_PASSWORD` | Development database password | db dump/push |
+| `PROD_PASSWORD` | Production database password | db dump/push to production |
 | `PROD_PROJECT_REF` | Production Supabase project ref | db operations |
-| `DEV_PROJECT_REF` | Development Supabase project ref | db operations |
 | `APNS_KEY_ID` | APNs key ID | deploy secrets |
 | `APNS_TEAM_ID` | APNs team ID | deploy secrets |
 | `APNS_BUNDLE_ID` | APNs bundle ID | deploy secrets |
 | `APNS_ENVIRONMENT` | APNs environment (development/production) | deploy secrets |
 | `DRIFT_DEBUG` | Enable debug output | debugging |
+
+> **Note:** Non-production database credentials are automatically retrieved via the Supabase CLI. Only production credentials need to be set manually.
 
 ## CI/CD Usage
 
@@ -460,18 +460,17 @@ Full documentation is available in the `docs/` directory, including:
 ### Viewing Docs Locally
 
 ```bash
-# Using Python (built-in)
+# Using drift (recommended)
+drift docs              # Serve on localhost:3000 and open browser
+drift docs --port 8080  # Custom port
+drift docs --no-open    # Don't open browser automatically
+
+# Alternative methods
 cd docs && python3 -m http.server 3000
-
-# Using npx (no install required)
 npx serve docs
-
-# Using docsify-cli
-npm i -g docsify-cli
-docsify serve docs
 ```
 
-Then open http://localhost:3000 in your browser.
+Press Ctrl+C to stop the server.
 
 ## License
 

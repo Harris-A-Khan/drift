@@ -128,8 +128,9 @@ drift migrate push
 |----------|-------------|--------------|
 | `SUPABASE_ACCESS_TOKEN` | Supabase access token for API access | CI/CD, secrets copy |
 | `SUPABASE_DB_PASSWORD` | Database password for migrations | migrate push/history |
-| `PROD_PASSWORD` | Production database password | db dump/push |
-| `DEV_PASSWORD` | Development database password | db dump/push |
+| `PROD_PASSWORD` | Production database password | db dump/push to production |
+
+> **Note:** Non-production database credentials are automatically retrieved via the Supabase CLI.
 
 ## CI/CD Usage
 

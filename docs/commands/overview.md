@@ -23,6 +23,8 @@ drift <command> [subcommand] [flags]
 | `backup` | Database backup operations |
 | `storage` | Cloud storage setup |
 | `version` | Version and build number management |
+| `docs` | Serve documentation locally |
+| `doctor` | Check system dependencies |
 
 ## Global Flags
 
