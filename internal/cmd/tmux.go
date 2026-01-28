@@ -22,11 +22,15 @@ Without arguments, shows an interactive picker to attach to an existing
 session or create a new one for the current worktree.
 
 Sessions are automatically named after worktree directories for easy
-identification.`,
+identification.
+
+Use --claude to filter sessions that have Claude Code running.`,
 	Example: `  drift tmux              # Interactive session picker
   drift tmux list         # List all sessions
+  drift tmux list --claude # List only sessions with Claude Code
   drift tmux new          # Create session for current worktree
   drift tmux attach       # Attach to session (interactive)
+  drift tmux attach --claude # Attach to Claude session
   drift tmux kill         # Kill a session (interactive)`,
 	RunE: runTmuxInteractive,
 }
@@ -65,10 +69,16 @@ var tmuxKillCmd = &cobra.Command{
 
 var (
 	tmuxDetachedFlag bool
+	tmuxClaudeFlag   bool
 )
 
 func init() {
 	tmuxNewCmd.Flags().BoolVarP(&tmuxDetachedFlag, "detached", "d", false, "Create session in detached mode")
+
+	// Add --claude flag to relevant commands
+	tmuxCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Filter to sessions with Claude Code running")
+	tmuxListCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Only show sessions with Claude Code running")
+	tmuxAttachCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Only show sessions with Claude Code running")
 
 	tmuxCmd.AddCommand(tmuxListCmd)
 	tmuxCmd.AddCommand(tmuxNewCmd)
@@ -84,6 +94,41 @@ type TmuxSession struct {
 	Created   string
 	Attached  bool
 	Directory string
+	HasClaude bool // Whether Claude Code is running in this session
+}
+
+// sessionHasClaudeCode checks if a tmux session has Claude Code running in any pane.
+func sessionHasClaudeCode(sessionName string) bool {
+	// Get all pane commands for this session
+	result, err := shell.Run("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_current_command}")
+	if err != nil || result.ExitCode != 0 {
+		return false
+	}
+
+	// Check each pane's command for claude
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		cmd := strings.TrimSpace(strings.ToLower(line))
+		if cmd == "" {
+			continue
+		}
+		// Check for claude command (could be "claude" or contain "claude")
+		if cmd == "claude" || strings.Contains(cmd, "claude") {
+			return true
+		}
+	}
+
+	// Also check pane titles for "Claude Code"
+	result, err = shell.Run("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_title}")
+	if err == nil && result.ExitCode == 0 {
+		for _, line := range strings.Split(result.Stdout, "\n") {
+			title := strings.TrimSpace(line)
+			if strings.Contains(title, "Claude") || strings.Contains(title, "claude") {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // listTmuxSessions returns all active tmux sessions.
@@ -118,11 +163,25 @@ func listTmuxSessions() ([]TmuxSession, error) {
 				session.Directory = parts[4]
 			}
 
+			// Check for Claude Code
+			session.HasClaude = sessionHasClaudeCode(session.Name)
+
 			sessions = append(sessions, session)
 		}
 	}
 
 	return sessions, nil
+}
+
+// filterClaudeSessions returns only sessions with Claude Code running.
+func filterClaudeSessions(sessions []TmuxSession) []TmuxSession {
+	var claudeSessions []TmuxSession
+	for _, s := range sessions {
+		if s.HasClaude {
+			claudeSessions = append(claudeSessions, s)
+		}
+	}
+	return claudeSessions
 }
 
 // getWorktreeSessions returns tmux sessions that match worktree names.
@@ -198,7 +257,16 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Filter by Claude if flag is set
+	if tmuxClaudeFlag {
+		sessions = filterClaudeSessions(sessions)
+	}
+
 	if len(sessions) == 0 {
+		if tmuxClaudeFlag {
+			ui.Info("No tmux sessions with Claude Code running")
+			return nil
+		}
 		// No sessions, create one for current worktree
 		ui.Info("No tmux sessions found")
 		return runTmuxNew(cmd, args)
@@ -206,18 +274,28 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 
 	// Build selection items
 	items := make([]string, 0, len(sessions)+1)
-	items = append(items, fmt.Sprintf("+ Create new session (%s)", getCurrentWorktreeName()))
+	if !tmuxClaudeFlag {
+		items = append(items, fmt.Sprintf("+ Create new session (%s)", getCurrentWorktreeName()))
+	}
 
 	for _, s := range sessions {
 		status := ""
 		if s.Attached {
 			status = " (attached)"
 		}
-		items = append(items, fmt.Sprintf("%s [%d windows]%s", s.Name, s.Windows, status))
+		claudeIndicator := ""
+		if s.HasClaude {
+			claudeIndicator = " 🤖"
+		}
+		items = append(items, fmt.Sprintf("%s%s [%d windows]%s", s.Name, claudeIndicator, s.Windows, status))
 	}
 
 	// Show interactive picker
-	selected, err := ui.PromptSelect("Select tmux session", items)
+	promptLabel := "Select tmux session"
+	if tmuxClaudeFlag {
+		promptLabel = "Select Claude Code session"
+	}
+	selected, err := ui.PromptSelect(promptLabel, items)
 	if err != nil {
 		return err
 	}
@@ -227,8 +305,10 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 		return runTmuxNew(cmd, args)
 	}
 
-	// Extract session name from selection
+	// Extract session name from selection (handle the 🤖 emoji)
 	sessionName := strings.Split(selected, " ")[0]
+	sessionName = strings.TrimSuffix(sessionName, "🤖")
+	sessionName = strings.TrimSpace(sessionName)
 
 	// Attach to session
 	ui.Infof("Attaching to session: %s", sessionName)
@@ -248,12 +328,25 @@ func runTmuxList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Filter by Claude if flag is set
+	if tmuxClaudeFlag {
+		sessions = filterClaudeSessions(sessions)
+	}
+
 	if len(sessions) == 0 {
-		ui.Info("No tmux sessions running")
+		if tmuxClaudeFlag {
+			ui.Info("No tmux sessions with Claude Code running")
+		} else {
+			ui.Info("No tmux sessions running")
+		}
 		return nil
 	}
 
-	ui.Header("Tmux Sessions")
+	if tmuxClaudeFlag {
+		ui.Header("Claude Code Sessions")
+	} else {
+		ui.Header("Tmux Sessions")
+	}
 
 	// Get worktree names for highlighting
 	worktrees, _ := git.ListWorktrees()
@@ -268,12 +361,18 @@ func runTmuxList(cmd *cobra.Command, args []string) error {
 			status = ui.Green("attached")
 		}
 
+		// Add Claude indicator
+		claudeIndicator := ""
+		if s.HasClaude {
+			claudeIndicator = " 🤖"
+		}
+
 		name := s.Name
 		if wtNames[s.Name] {
 			name = ui.Cyan(s.Name) // Highlight worktree sessions
 		}
 
-		ui.KeyValue(name, fmt.Sprintf("%d windows, %s", s.Windows, status))
+		ui.KeyValue(name+claudeIndicator, fmt.Sprintf("%d windows, %s", s.Windows, status))
 	}
 
 	return nil
@@ -348,9 +447,18 @@ func runTmuxAttach(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Filter by Claude if flag is set
+	if tmuxClaudeFlag {
+		sessions = filterClaudeSessions(sessions)
+	}
+
 	if len(sessions) == 0 {
-		ui.Info("No tmux sessions running")
-		ui.Info("Create one with: drift tmux new")
+		if tmuxClaudeFlag {
+			ui.Info("No tmux sessions with Claude Code running")
+		} else {
+			ui.Info("No tmux sessions running")
+			ui.Info("Create one with: drift tmux new")
+		}
 		return nil
 	}
 
@@ -365,14 +473,25 @@ func runTmuxAttach(cmd *cobra.Command, args []string) error {
 			if s.Attached {
 				status = " (attached)"
 			}
-			items[i] = fmt.Sprintf("%s [%d windows]%s", s.Name, s.Windows, status)
+			claudeIndicator := ""
+			if s.HasClaude {
+				claudeIndicator = " 🤖"
+			}
+			items[i] = fmt.Sprintf("%s%s [%d windows]%s", s.Name, claudeIndicator, s.Windows, status)
 		}
 
-		selected, err := ui.PromptSelect("Select session to attach", items)
+		promptLabel := "Select session to attach"
+		if tmuxClaudeFlag {
+			promptLabel = "Select Claude Code session to attach"
+		}
+		selected, err := ui.PromptSelect(promptLabel, items)
 		if err != nil {
 			return err
 		}
+		// Extract session name (handle the 🤖 emoji)
 		sessionName = strings.Split(selected, " ")[0]
+		sessionName = strings.TrimSuffix(sessionName, "🤖")
+		sessionName = strings.TrimSpace(sessionName)
 	}
 
 	ui.Infof("Attaching to session: %s", sessionName)

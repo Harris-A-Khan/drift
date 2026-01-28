@@ -63,12 +63,18 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	
 	// Optional tools
 	ui.SubHeader("Optional Tools")
-	
+
 	// fzf (for interactive selection)
 	results = append(results, checkOptionalTool("fzf", "fzf --version", "interactive selection"))
-	
+
 	// VS Code
 	results = append(results, checkOptionalTool("code", "code --version", "opening worktrees"))
+
+	// tmux (for session management)
+	results = append(results, checkOptionalTool("tmux", "tmux -V", "session management"))
+
+	// fastlane (for iOS CI/CD)
+	results = append(results, checkOptionalTool("fastlane", "fastlane --version", "iOS CI/CD"))
 
 	// Print tool results
 	for _, r := range results {
