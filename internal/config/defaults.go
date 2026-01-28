@@ -21,6 +21,7 @@ func DefaultConfig() *Config {
 			BundleID:        "",
 			PushKeyPattern:  "AuthKey_*.p8",
 			PushEnvironment: "development",
+			SecretsDir:      "secrets",
 		},
 		Xcode: XcodeConfig{
 			XcconfigOutput: "Config.xcconfig",
@@ -50,7 +51,7 @@ func DefaultConfig() *Config {
 		},
 		Worktree: WorktreeConfig{
 			NamingPattern:     "{project}-{branch}",
-			CopyOnCreate:      []string{".env", "*.p8"},
+			CopyOnCreate:      []string{".env", "secrets/*"},
 			AutoSetupXcconfig: true,
 		},
 		Device: DeviceConfig{
@@ -88,6 +89,9 @@ func MergeWithDefaults(cfg *Config) *Config {
 	}
 	if cfg.Apple.PushEnvironment == "" {
 		cfg.Apple.PushEnvironment = defaults.Apple.PushEnvironment
+	}
+	if cfg.Apple.SecretsDir == "" {
+		cfg.Apple.SecretsDir = defaults.Apple.SecretsDir
 	}
 
 	// Xcode defaults

@@ -318,12 +318,13 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 		ui.Infof("Using per-environment push key: %s", pushKeyPattern)
 	}
 
-	apnsSecrets, err := supabase.LoadAPNSSecretsFromConfig(
+	apnsSecrets, err := supabase.LoadAPNSSecretsFromConfigWithSecretsDir(
 		cfg.Apple.TeamID,
 		cfg.Apple.BundleID,
 		pushKeyPattern,
 		apnsEnv,
 		cfg.ProjectRoot(),
+		cfg.Apple.SecretsDir,
 	)
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not load APNs secrets: %v", err))

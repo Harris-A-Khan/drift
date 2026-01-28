@@ -102,6 +102,7 @@ type AppleConfig struct {
 	BundleID        string `yaml:"bundle_id" mapstructure:"bundle_id"`
 	PushKeyPattern  string `yaml:"push_key_pattern" mapstructure:"push_key_pattern"`
 	PushEnvironment string `yaml:"push_environment" mapstructure:"push_environment"` // development, production
+	SecretsDir      string `yaml:"secrets_dir" mapstructure:"secrets_dir"`           // directory for API keys, certs (default: secrets)
 }
 
 // XcodeConfig holds Xcode-related configuration.
@@ -272,6 +273,16 @@ func (c *Config) GetVersionFilePath() string {
 // GetEnvLocalPath returns the absolute path to the .env.local file for web projects.
 func (c *Config) GetEnvLocalPath() string {
 	return filepath.Join(c.ProjectRoot(), c.Web.EnvOutput)
+}
+
+// GetSecretsPath returns the absolute path to the secrets directory.
+func (c *Config) GetSecretsPath() string {
+	return filepath.Join(c.ProjectRoot(), c.Apple.SecretsDir)
+}
+
+// GetBackupPath returns the absolute path to the backup directory.
+func (c *Config) GetBackupPath() string {
+	return filepath.Join(c.ProjectRoot(), c.Database.BackupDir)
 }
 
 // GetPrimaryDevice returns the primary device from the config, or the first device if no primary is set.

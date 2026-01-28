@@ -99,6 +99,7 @@ var (
 	envCopyCustomFromFlag string
 	envCopyEnvFlag        bool
 	envSchemeFlag         string
+	envCIFlag             bool
 )
 
 func init() {
@@ -107,6 +108,7 @@ func init() {
 	envSetupCmd.Flags().StringVar(&envCopyCustomFromFlag, "copy-custom-from", "", "Copy custom variables from a specific .env.local file path")
 	envSetupCmd.Flags().BoolVar(&envCopyEnvFlag, "copy-env", false, "Copy custom variables from another worktree (interactive picker)")
 	envSetupCmd.Flags().StringVar(&envSchemeFlag, "scheme", "", "Xcode scheme to use for buildServer.json (requires --build-server)")
+	envSetupCmd.Flags().BoolVar(&envCIFlag, "ci", false, "CI mode: read SUPABASE_URL and SUPABASE_ANON_KEY from environment variables")
 
 	envCmd.AddCommand(envShowCmd)
 	envCmd.AddCommand(envSetupCmd)
@@ -216,6 +218,11 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	cfg := config.LoadOrDefault()
+
+	// CI mode: read from environment variables
+	if envCIFlag {
+		return runEnvSetupCI(cfg)
+	}
 
 	// Get current git branch
 	gitBranch, err := git.CurrentBranch()
@@ -409,6 +416,102 @@ func envColorString(env string) string {
 	default:
 		return ui.Green(env)
 	}
+}
+
+// runEnvSetupCI generates Config.xcconfig or .env.local from environment variables.
+// This is used in CI pipelines where Supabase CLI is not available or configured.
+func runEnvSetupCI(cfg *config.Config) error {
+	ui.Info("CI mode: reading credentials from environment variables")
+
+	// Read required environment variables
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseAnonKey := os.Getenv("SUPABASE_ANON_KEY")
+
+	if supabaseURL == "" {
+		return fmt.Errorf("SUPABASE_URL environment variable is not set")
+	}
+	if supabaseAnonKey == "" {
+		return fmt.Errorf("SUPABASE_ANON_KEY environment variable is not set")
+	}
+
+	// Get git branch (optional in CI, may not have full git context)
+	gitBranch := "ci"
+	if branch, err := git.CurrentBranch(); err == nil {
+		gitBranch = branch
+	}
+
+	// Generate config file based on project type
+	var outputPath string
+
+	if cfg.Project.IsWebPlatform() {
+		outputPath = cfg.GetEnvLocalPath()
+		generator := web.NewEnvLocalGenerator(outputPath)
+
+		// Create minimal BranchInfo for CI
+		info := &supabase.BranchInfo{
+			GitBranch:   gitBranch,
+			Environment: supabase.EnvFeature, // Default to feature for CI
+			APIURL:      supabaseURL,
+			ProjectRef:  extractProjectRef(supabaseURL),
+			SupabaseBranch: &supabase.Branch{
+				Name: "ci",
+			},
+		}
+
+		webSecrets := &web.BranchSecretsInput{
+			AnonKey: supabaseAnonKey,
+		}
+
+		if err := generator.GenerateFromBranchInfo(info, webSecrets); err != nil {
+			return fmt.Errorf("failed to generate .env.local: %w", err)
+		}
+
+		ui.Success(".env.local generated from environment variables")
+	} else {
+		outputPath = cfg.GetXcconfigPath()
+		generator := xcode.NewXcconfigGenerator(outputPath)
+
+		// Create minimal BranchInfo for CI
+		info := &supabase.BranchInfo{
+			GitBranch:   gitBranch,
+			Environment: supabase.EnvFeature, // Default to feature for CI
+			APIURL:      supabaseURL,
+			ProjectRef:  extractProjectRef(supabaseURL),
+			SupabaseBranch: &supabase.Branch{
+				Name: "ci",
+			},
+		}
+
+		if err := generator.GenerateFromBranchInfo(info, supabaseAnonKey); err != nil {
+			return fmt.Errorf("failed to generate Config.xcconfig: %w", err)
+		}
+
+		ui.Success("Config.xcconfig generated from environment variables")
+	}
+
+	// Display summary
+	ui.NewLine()
+	ui.KeyValue("Mode", ui.Cyan("CI"))
+	ui.KeyValue("Supabase URL", ui.Cyan(supabaseURL))
+	ui.KeyValue("Anon Key", ui.Cyan(maskValue(supabaseAnonKey)))
+	ui.KeyValue("Output", outputPath)
+
+	return nil
+}
+
+// extractProjectRef attempts to extract the project ref from a Supabase URL.
+// Example: https://abcdefgh.supabase.co -> abcdefgh
+func extractProjectRef(url string) string {
+	// Remove protocol
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+
+	// Extract subdomain
+	parts := strings.Split(url, ".")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return "unknown"
 }
 
 // generateBuildServer generates buildServer.json for sourcekit-lsp support.

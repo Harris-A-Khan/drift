@@ -218,16 +218,33 @@ func (c *Client) SetAPNSSecrets(projectRef string, apns APNSSecrets) error {
 
 // LoadAPNSSecretsFromConfig loads APNs secrets from config and environment.
 func LoadAPNSSecretsFromConfig(teamID, bundleID, keyPattern, environment, projectRoot string) (*APNSSecrets, error) {
+	return LoadAPNSSecretsFromConfigWithSecretsDir(teamID, bundleID, keyPattern, environment, projectRoot, "secrets")
+}
+
+// LoadAPNSSecretsFromConfigWithSecretsDir loads APNs secrets with a custom secrets directory.
+func LoadAPNSSecretsFromConfigWithSecretsDir(teamID, bundleID, keyPattern, environment, projectRoot, secretsDir string) (*APNSSecrets, error) {
 	secrets := &APNSSecrets{
 		TeamID:      teamID,
 		BundleID:    bundleID,
 		Environment: environment,
 	}
 
-	// Try to find the .p8 key file
-	keyFiles, err := filepath.Glob(filepath.Join(projectRoot, keyPattern))
+	// Try to find the .p8 key file in multiple locations
+	var keyFiles []string
+	var err error
+
+	// 1. First try secrets directory (e.g., secrets/AuthKey_*.p8)
+	if secretsDir != "" {
+		keyFiles, err = filepath.Glob(filepath.Join(projectRoot, secretsDir, keyPattern))
+	}
+
+	// 2. Try project root (e.g., ./AuthKey_*.p8)
 	if err != nil || len(keyFiles) == 0 {
-		// Try in parent directory
+		keyFiles, err = filepath.Glob(filepath.Join(projectRoot, keyPattern))
+	}
+
+	// 3. Try parent directory
+	if err != nil || len(keyFiles) == 0 {
 		keyFiles, err = filepath.Glob(filepath.Join(filepath.Dir(projectRoot), keyPattern))
 	}
 
