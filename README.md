@@ -198,12 +198,17 @@ drift deploy list-secrets  # List configured secrets
 Manage database dumps and restores.
 
 ```bash
-drift db dump prod         # Dump production database
-drift db dump dev          # Dump development database
+drift db dump prod         # Dump to backups/prod_YYYYMMDD_HHMMSS.backup
+drift db dump dev          # Dump to backups/dev_YYYYMMDD_HHMMSS.backup
 drift db push dev          # Push prod backup to development
 drift db push feature      # Push dev backup to feature branch
+drift db push feature -i prod_20260215_143000.backup  # Push a specific local backup
 drift db list              # List local backups
 ```
+
+`drift db push` supports `--input` / `-i` to select a specific backup file.
+If a bare filename is provided (for example `prod_20260215_143000.backup`),
+Drift checks `database.backup_dir` first, then the project root.
 
 ### Migrations (`drift migrate`)
 
@@ -322,6 +327,7 @@ xcode:  # iOS/macOS only
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
+  backup_dir: backups      # Local backup directory used by drift db dump/push/list
 
 backup:
   bucket: database-backups

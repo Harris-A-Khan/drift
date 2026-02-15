@@ -537,6 +537,7 @@ project:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
   direct_port: 5432
+  backup_dir: backups
 
 backup:
   provider: supabase

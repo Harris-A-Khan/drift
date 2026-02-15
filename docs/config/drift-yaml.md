@@ -59,6 +59,7 @@ apple:
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
+  backup_dir: backups                  # Local backup directory for drift db dump/push/list
 
 # Backup configuration
 backup:
@@ -189,14 +190,19 @@ apple:
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
+  backup_dir: backups
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
 | `pooler_host` | Supabase pooler host | `aws-0-us-east-1.pooler.supabase.com` |
 | `pooler_port` | Pooler port | `6543` |
+| `backup_dir` | Local backup directory used by `drift db dump`, `drift db push`, and `drift db list` | `backups` |
 
 > **Note:** PostgreSQL binaries (`pg_dump`, `pg_restore`) must be in your PATH. Install with `brew install postgresql@16` and add to your shell profile: `export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"`
+
+When using `drift db push --input <file>`, a bare filename is resolved from
+`database.backup_dir` first, then project root.
 
 ### backup
 

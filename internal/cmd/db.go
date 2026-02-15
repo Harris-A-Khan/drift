@@ -39,8 +39,8 @@ This creates a complete database dump including:
 The dump is in plain SQL format and can be restored with 'drift db push'.
 
 Examples:
-  drift db dump prod              # Dump to prod.backup (default)
-  drift db dump dev               # Dump to dev.backup (default)
+  drift db dump prod              # Dump to backups/prod_YYYYMMDD_HHMMSS.backup (default)
+  drift db dump dev               # Dump to backups/dev_YYYYMMDD_HHMMSS.backup (default)
   drift db dump prod mybackup     # Dump to mybackup.backup
   drift db dump prod -o custom.sql  # Dump to custom.sql`,
 	Args: cobra.RangeArgs(1, 2),
@@ -57,7 +57,8 @@ If no target is specified, shows an interactive branch picker.
 Examples:
   drift db push           # Interactive: select from all branches
   drift db push dev       # Push prod backup to development
-  drift db push feature   # Push dev backup to current feature branch`,
+  drift db push feature   # Push dev backup to current feature branch
+  drift db push feature -i prod_20260215_143000.backup`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runDbPush,
 }
@@ -78,11 +79,16 @@ Examples:
 }
 
 var dbListCmd = &cobra.Command{
-	Use:   "list <env>",
+	Use:   "list [filter]",
 	Short: "List local backups",
-	Long:  `List available local database backups.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runDbList,
+	Long: `List available local database backups.
+
+Optional filters:
+  prod / production     List production backups (prod*.backup)
+  dev / development     List development backups (dev*.backup)
+  <name>.backup         List an exact backup file name`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runDbList,
 }
 
 var (
@@ -152,7 +158,7 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	env := args[0]
-	_ = config.LoadOrDefault() // Load config for consistency
+	cfg := config.LoadOrDefault()
 
 	// Validate environment
 	if env != "prod" && env != "production" && env != "dev" && env != "development" {
@@ -215,7 +221,6 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		poolerHost = connInfo.PoolerHost
 	} else {
 		// Fallback to config (shouldn't happen if API works)
-		cfg := config.LoadOrDefault()
 		poolerHost = cfg.Database.PoolerHost
 	}
 
@@ -262,7 +267,11 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		if !isProd {
 			prefix = "dev"
 		}
-		opts.OutputFile = fmt.Sprintf("%s.backup", prefix)
+		backupDir := cfg.GetBackupPath()
+		if err := os.MkdirAll(backupDir, 0755); err != nil {
+			return fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
+		}
+		opts.OutputFile = filepath.Join(backupDir, timestampedBackupFilename(prefix, time.Now()))
 	}
 
 	ui.NewLine()
@@ -418,46 +427,67 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 	}
 
 	targetProjectRef := targetBranch.ProjectRef
+	cfg := config.LoadOrDefault()
+	backups, err := discoverLocalBackups(cfg)
+	if err != nil {
+		return err
+	}
+	expectedSourceFile := sourceFile
+	sourcePrefix := "dev"
+	if strings.HasPrefix(strings.ToLower(expectedSourceFile), "prod") {
+		sourcePrefix = "prod"
+	}
 
 	// Override source file if specified via flag
 	if dbInputFlag != "" {
-		sourceFile = dbInputFlag
+		sourceFile, err = resolveBackupInputPath(dbInputFlag, backups)
+		if err != nil {
+			if len(backups) == 0 {
+				return fmt.Errorf("%w\nNo backup files found in %s or %s", err, cfg.GetBackupPath(), cfg.ProjectRoot())
+			}
+			return fmt.Errorf("%w\nRun 'drift db list' to view available backups", err)
+		}
 	} else {
-		// Show interactive backup picker
-		backups, _ := filepath.Glob("*.backup")
-		if len(backups) > 1 {
-			// Build options with file info
-			options := make([]string, len(backups))
-			for i, f := range backups {
-				info, err := os.Stat(f)
+		if exact := findLocalBackupByName(backups, expectedSourceFile); exact != nil {
+			sourceFile = exact.Path
+		} else {
+			if len(backups) == 0 {
+				return fmt.Errorf("backup file not found: %s\nNo backup files found in %s or %s\nRun 'drift db dump %s' first", expectedSourceFile, cfg.GetBackupPath(), cfg.ProjectRoot(), sourcePrefix)
+			}
+
+			suggested := suggestLocalBackup(backups, expectedSourceFile, sourcePrefix)
+			if suggested == nil {
+				return fmt.Errorf("no backup files found")
+			}
+
+			if IsYes() {
+				ui.Warningf("Expected backup %s not found", expectedSourceFile)
+				ui.Infof("Using suggested backup: %s", backupDisplayPath(suggested.Path, cfg.ProjectRoot()))
+				sourceFile = suggested.Path
+			} else {
+				ui.Warningf("Expected backup %s not found", expectedSourceFile)
+
+				options := make([]string, len(backups))
+				lookup := make(map[string]localBackupFile, len(backups))
+				for i, backup := range backups {
+					sizeMB := float64(backup.SizeBytes) / 1024 / 1024
+					marker := ""
+					if backup.Path == suggested.Path {
+						marker = " (suggested)"
+					}
+					option := fmt.Sprintf("%s  %.2f MB  %s%s", backupDisplayPath(backup.Path, cfg.ProjectRoot()), sizeMB, formatBackupAge(backup.ModTime), marker)
+					options[i] = option
+					lookup[option] = backup
+				}
+
+				ui.Header("Select Backup File")
+				selected, err := ui.PromptSelect("Use backup", options)
 				if err != nil {
-					options[i] = f
-					continue
+					return fmt.Errorf("backup selection cancelled: %w", err)
 				}
-				sizeMB := float64(info.Size()) / 1024 / 1024
-				age := time.Since(info.ModTime())
-				ageStr := fmt.Sprintf("%.0f min ago", age.Minutes())
-				if age >= time.Hour && age < 24*time.Hour {
-					ageStr = fmt.Sprintf("%.0f hours ago", age.Hours())
-				} else if age >= 24*time.Hour {
-					ageStr = fmt.Sprintf("%.1f days ago", age.Hours()/24)
-				}
-				// Mark the suggested default
-				marker := ""
-				if f == sourceFile {
-					marker = " (suggested)"
-				}
-				options[i] = fmt.Sprintf("%s  %.2f MB  %s%s", f, sizeMB, ageStr, marker)
-			}
 
-			ui.Header("Select Backup File")
-			selected, err := ui.PromptSelect("Use backup", options)
-			if err != nil {
-				return fmt.Errorf("backup selection cancelled: %w", err)
+				sourceFile = lookup[selected].Path
 			}
-
-			// Extract filename from selection (first word before spaces)
-			sourceFile = strings.Fields(selected)[0]
 		}
 	}
 
@@ -482,8 +512,25 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 					if err := runDbDump(cmd, []string{dumpEnv}); err != nil {
 						return err
 					}
+
+					refreshedBackups, discoverErr := discoverLocalBackups(cfg)
+					if discoverErr == nil {
+						if refreshed := suggestLocalBackup(refreshedBackups, "", sourcePrefix); refreshed != nil {
+							sourceFile = refreshed.Path
+						}
+					}
 				}
 			}
+		}
+	}
+
+	ui.NewLine()
+	ui.KeyValue("Selected Backup", ui.Cyan(backupDisplayPath(sourceFile, cfg.ProjectRoot())))
+	if !IsYes() {
+		confirmed, err := ui.PromptYesNo("Use selected backup?", true)
+		if err != nil || !confirmed {
+			ui.Info("Cancelled")
+			return nil
 		}
 	}
 
@@ -519,7 +566,6 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		poolerHost = connInfo.PoolerHost
 	} else {
 		// Fallback to config (shouldn't happen if API works)
-		cfg := config.LoadOrDefault()
 		poolerHost = cfg.Database.PoolerHost
 	}
 
@@ -584,41 +630,26 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 func runDbList(cmd *cobra.Command, args []string) error {
 	ui.Header("Local Database Backups")
-
-	pattern := "*.backup"
-	if len(args) > 0 {
-		pattern = args[0] + ".backup"
-	}
-
-	matches, err := filepath.Glob(pattern)
+	cfg := config.LoadOrDefault()
+	backups, err := discoverLocalBackups(cfg)
 	if err != nil {
 		return err
 	}
+	if len(args) > 0 {
+		backups = filterLocalBackups(backups, args[0])
+	}
 
-	if len(matches) == 0 {
+	if len(backups) == 0 {
 		ui.Info("No backup files found")
 		return nil
 	}
 
-	for _, file := range matches {
-		info, err := os.Stat(file)
-		if err != nil {
-			continue
-		}
-
-		sizeMB := float64(info.Size()) / 1024 / 1024
-		age := time.Since(info.ModTime())
-		ageStr := fmt.Sprintf("%.0f hours ago", age.Hours())
-		if age < time.Hour {
-			ageStr = fmt.Sprintf("%.0f minutes ago", age.Minutes())
-		} else if age > 24*time.Hour {
-			ageStr = fmt.Sprintf("%.1f days ago", age.Hours()/24)
-		}
-
+	for _, backup := range backups {
+		sizeMB := float64(backup.SizeBytes) / 1024 / 1024
 		fmt.Printf("  %s  %s  %s\n",
-			ui.Cyan(file),
+			ui.Cyan(backupDisplayPath(backup.Path, cfg.ProjectRoot())),
 			ui.Dim(fmt.Sprintf("%.2f MB", sizeMB)),
-			ui.Dim(ageStr),
+			ui.Dim(formatBackupAge(backup.ModTime)),
 		)
 	}
 
@@ -1005,5 +1036,3 @@ func cleanSeedFile(inputPath, outputPath string) error {
 	output := strings.Join(cleanLines, "\n")
 	return os.WriteFile(outputPath, []byte(output), 0644)
 }
-
-

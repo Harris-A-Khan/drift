@@ -43,7 +43,31 @@ Optionally configure pooler settings in `drift.yaml`:
 database:
   pooler_host: aws-0-us-east-1.pooler.supabase.com
   pooler_port: 6543
+  backup_dir: backups
 ```
+
+`database.backup_dir` controls where local `drift db` backups are read/written.
+Drift falls back to project root when searching for older local backup files.
+
+## Local `drift db` Backups
+
+Use `drift db` when you want to quickly sync production/development data into another branch:
+
+```bash
+# Creates a timestamped file in database.backup_dir
+drift db dump prod
+
+# Push latest/suggested backup to current feature branch
+drift db push feature
+
+# Push a specific backup file
+drift db push feature --input prod_20260215_143000.backup
+```
+
+Notes:
+- Default dump names are timestamped: `prod_YYYYMMDD_HHMMSS.backup` / `dev_YYYYMMDD_HHMMSS.backup`.
+- `drift db push --input` (or `-i`) accepts full paths or bare filenames.
+- Bare filenames are resolved from `database.backup_dir` first, then project root.
 
 ## Creating Backups
 
