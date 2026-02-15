@@ -337,6 +337,59 @@ supabase:
 	}
 }
 
+func TestConfig_GetEnvironmentConfig_NormalizesKeys(t *testing.T) {
+	cfg := &Config{
+		Environments: map[string]EnvironmentConfig{
+			"development": {
+				Secrets: map[string]string{
+					"ENABLE_DEBUG_SWITCH": "true",
+				},
+			},
+			"production": {
+				Secrets: map[string]string{
+					"ENABLE_DEBUG_SWITCH": "false",
+				},
+			},
+		},
+	}
+
+	dev := cfg.GetEnvironmentConfig("Development")
+	if dev == nil {
+		t.Fatal("GetEnvironmentConfig(Development) returned nil")
+	}
+	if got := dev.Secrets["ENABLE_DEBUG_SWITCH"]; got != "true" {
+		t.Fatalf("Development ENABLE_DEBUG_SWITCH = %q, want %q", got, "true")
+	}
+
+	prod := cfg.GetEnvironmentConfig("Production")
+	if prod == nil {
+		t.Fatal("GetEnvironmentConfig(Production) returned nil")
+	}
+	if got := prod.Secrets["ENABLE_DEBUG_SWITCH"]; got != "false" {
+		t.Fatalf("Production ENABLE_DEBUG_SWITCH = %q, want %q", got, "false")
+	}
+}
+
+func TestConfig_GetEnvironmentConfig_FeatureFallsBackToDevelopment(t *testing.T) {
+	cfg := &Config{
+		Environments: map[string]EnvironmentConfig{
+			"development": {
+				Secrets: map[string]string{
+					"ENABLE_DEBUG_SWITCH": "true",
+				},
+			},
+		},
+	}
+
+	feature := cfg.GetEnvironmentConfig("Feature")
+	if feature == nil {
+		t.Fatal("GetEnvironmentConfig(Feature) returned nil")
+	}
+	if got := feature.Secrets["ENABLE_DEBUG_SWITCH"]; got != "true" {
+		t.Fatalf("Feature fallback ENABLE_DEBUG_SWITCH = %q, want %q", got, "true")
+	}
+}
+
 func TestConfig_GetMigrationsPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".drift.yaml")

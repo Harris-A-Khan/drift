@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -369,8 +370,11 @@ func (c *Config) GetEnvironmentConfig(environment string) *EnvironmentConfig {
 	if c.Environments == nil {
 		return nil
 	}
-	if env, ok := c.Environments[environment]; ok {
-		return &env
+
+	for _, key := range environmentLookupKeys(environment) {
+		if env, ok := c.Environments[key]; ok {
+			return &env
+		}
 	}
 	return nil
 }
@@ -391,6 +395,49 @@ func (c *Config) GetEnvironmentPushKey(environment string) string {
 		return ""
 	}
 	return envCfg.PushKey
+}
+
+func environmentLookupKeys(environment string) []string {
+	raw := strings.TrimSpace(environment)
+	if raw == "" {
+		return nil
+	}
+
+	lower := strings.ToLower(raw)
+	keys := []string{raw}
+	if lower != raw {
+		keys = append(keys, lower)
+	}
+
+	canonical := lower
+	switch lower {
+	case "prod", "production", "main", "master":
+		canonical = "production"
+	case "dev", "development":
+		canonical = "development"
+	case "feature", "preview":
+		canonical = "feature"
+	}
+
+	if !containsString(keys, canonical) {
+		keys = append(keys, canonical)
+	}
+
+	// Feature environments commonly reuse development settings unless explicitly overridden.
+	if canonical == "feature" && !containsString(keys, "development") {
+		keys = append(keys, "development")
+	}
+
+	return keys
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // IsVerbose returns whether verbose mode is enabled in preferences.
