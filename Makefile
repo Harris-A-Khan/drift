@@ -28,6 +28,7 @@ build:
 ## install: Install drift to /usr/local/bin
 install: build
 	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
+	@mkdir -p /usr/local/bin
 	@cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 	@echo "Installed successfully!"
 
@@ -124,4 +125,3 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
-
