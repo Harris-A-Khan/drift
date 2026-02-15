@@ -35,7 +35,8 @@ make deps                     # go mod download
 ```
 cmd/drift/main.go        → Entry point, injects version via ldflags
 internal/cmd/            → Cobra command implementations (root, env, worktree, deploy, db, migrate, backup, build, doctor, init, device, xcode)
-internal/cmd/protection.go → Production protection helpers (confirmation prompts)
+internal/cmd/branch_resolution.go → Shared Supabase branch resolution + fallback policy
+internal/cmd/protection.go → Environment-aware confirmation helpers
 internal/config/         → .drift.yaml loading, defaults, merging
 internal/config/local.go → .drift.local.yaml handling (developer-specific settings)
 internal/git/            → Git operations (repo, branch, worktree management)
@@ -49,32 +50,73 @@ pkg/shell/               → Shell command execution with context support
 
 ### Key Design Patterns
 
-1. **Shell abstraction**: `pkg/shell` provides `Run()`, `RunInDir()`, `RunWithEnv()`, `RunWithTimeout()` - all return `*Result` with stdout, stderr, exit code, and duration. Use `Runner` interface for testability. Enhanced verbose mode shows command output in real-time.
+1. **Shell abstraction**: `pkg/shell` provides `Run()`, `RunInDir()`, `RunWithEnv()`, `RunWithTimeout()` and returns `*Result` (stdout/stderr/exit code/duration). Use `Runner` where testability matters.
 
-2. **Config loading**: `config.Load()` searches up directory tree for `.drift.yaml`/`.drift.yml`. `MergeWithDefaults()` fills missing values. Access paths via `cfg.GetFunctionsPath()`, etc.
+2. **Config loading always includes local overrides**:
+   - `config.Load()` loads only `.drift.yaml`
+   - `config.LoadWithLocal()` loads `.drift.yaml` + `.drift.local.yaml` and merges
+   - `config.LoadOrDefault()` currently calls `LoadWithLocal()` so most commands see merged config by default
 
-3. **Split configuration**: `.drift.yaml` for team settings (committed), `.drift.local.yaml` for developer-specific settings (gitignored). Use `config.LoadWithLocal()` to load both and merge.
+3. **Split config contract**:
+   - `.drift.yaml`: team/shared settings (committed)
+   - `.drift.local.yaml`: developer/branch/worktree overrides (gitignored)
+   - Local merge supports: `supabase.override_branch`, `supabase.fallback_branch`, `apple.key_search_paths`, and `environments.<env>.secrets`/`push_key`/`skip_secrets`
 
-4. **Git worktree naming**: `GetWorktreePath(project, branch, pattern)` uses `{project}-{branch}` pattern. Branch names are sanitized (slashes → hyphens).
+4. **Supabase branch resolution is centralized** (`internal/cmd/branch_resolution.go`):
+   - Exact target first (`--branch` wins; otherwise local `override_branch` if set)
+   - On no match, fallback order is:
+     1) global `--fallback-branch`
+     2) `supabase.fallback_branch` from merged config
+     3) interactive non-production selection
+   - Production-like branches cannot be used as override/fallback targets.
 
-5. **Environment mapping**: Git branches map to Supabase environments. `main`/`master` → production, `dev`/`development` → development, others → feature branches.
+5. **Environment mapping + lookup normalization**:
+   - Branch env classes: production / development / feature
+   - `GetEnvironmentConfig()` normalizes names (`Production`/`production`, etc.)
+   - Feature env config falls back to development config when feature-specific config is absent
 
-6. **Protected branches**: Defined in config, checked before destructive operations on production.
+6. **Deploy confirmation policy** (`ConfirmDeploymentOperation()`):
+   - Production/protected branches: strict typed confirmation
+   - Development: yes/no confirmation
+   - Feature: no extra prompt
+   - All respect global `--yes`
 
-7. **Production protection**: Use `ConfirmProductionOperation()` for standard confirmations, `RequireProductionConfirmation()` for strict confirmations requiring "yes" input. Both respect `--yes` flag for automation.
+7. **Secrets deployment model** (`drift deploy secrets`):
+   - `supabase.secrets_to_push`: allowed key list
+   - `supabase.default_secrets`: baseline key/value map
+   - APNs-derived secrets are auto-discovered
+   - `environments.<env>.secrets` overlays defaults (local overrides shared)
+   - `environments.<env>.skip_secrets` prevents specific keys from being pushed on that env
+   - If `secrets_to_push` is empty, all discovered/merged keys are candidates
 
-8. **Per-environment configuration**: `cfg.Environments` map holds environment-specific secrets and push keys. Access via `cfg.Environments["production"].Secrets`.
+8. **Interactive secret setup** (`drift config set-secret`):
+   - Wizard updates shared and local config with a short question flow
+   - Updates `secrets_to_push`, `default_secrets`, env overrides, and production skip policy
+   - Intended to encode secret hierarchy without manual YAML editing
 
-9. **Function restrictions**: `cfg.Functions.Restricted` lists functions blocked from certain environments. Check before deployment.
+9. **APNs key discovery is explicit and configurable**:
+   - Uses `apple.push_key_pattern`
+   - Search paths from `apple.key_search_paths` (or defaults: `secrets`, `.`, `..`)
+   - CLI can override with repeated `--key-search-dir`
+   - Deploy output shows search directories and matched key file
+
+10. **Function restrictions**: `cfg.Supabase.Functions.Restricted` blocks specific functions per environment during deploy.
 
 ### Command Flow
 
 Commands in `internal/cmd/` follow this pattern:
 - `init()` registers flags and subcommands
-- `Run` functions validate inputs, load config, execute operations
+- `Run` functions validate inputs, load merged config, resolve branch target, execute operations
 - UI feedback via `ui.Success()`, `ui.Warning()`, `ui.Error()`, spinners
 - Confirmations via `ui.PromptYesNo()`, can be skipped with `--yes` flag
+- Verbose mode should explain branch resolution, fallback source, and secret selection decisions
 
 ### Testing Approach
 
 Tests create temporary git repositories via `setupTestRepo(t)` helper. For path comparisons on macOS, use `filepath.EvalSymlinks()` to handle `/var` → `/private/var` symlinks.
+
+In restricted sandbox environments, run tests with:
+
+```bash
+GOCACHE=/tmp/go-build GOPROXY=off go test ./internal/config ./internal/supabase ./internal/cmd
+```

@@ -143,6 +143,25 @@ func MergeLocalConfig(main *Config, local *LocalConfig) *Config {
 					mainEnv.Secrets[key] = value
 				}
 			}
+			if len(localEnv.SkipSecrets) > 0 {
+				seen := make(map[string]bool)
+				merged := make([]string, 0, len(mainEnv.SkipSecrets)+len(localEnv.SkipSecrets))
+				for _, key := range mainEnv.SkipSecrets {
+					if key == "" || seen[key] {
+						continue
+					}
+					seen[key] = true
+					merged = append(merged, key)
+				}
+				for _, key := range localEnv.SkipSecrets {
+					if key == "" || seen[key] {
+						continue
+					}
+					seen[key] = true
+					merged = append(merged, key)
+				}
+				mainEnv.SkipSecrets = merged
+			}
 			main.Environments[envName] = mainEnv
 		}
 	}
@@ -211,8 +230,8 @@ func GenerateLocalConfigContent() string {
 #       ENABLE_DEBUG_SWITCH: "true"
 #       API_BASE_URL: "https://dev-api.example.com"
 #   production:
-#     secrets:
-#       ENABLE_DEBUG_SWITCH: "false"
+#     skip_secrets:
+#       - ENABLE_DEBUG_SWITCH
 
 # Device preferences
 # device:

@@ -424,6 +424,8 @@ func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseNa
     - APNS_BUNDLE_ID
     - APNS_PRIVATE_KEY
     - APNS_ENVIRONMENT
+  # default_secrets:
+  #   ENABLE_DEBUG_SWITCH: "false"
 
 `, supabaseRef, supabaseName, functionsDir, migrationsDir)
 	} else {
@@ -441,6 +443,8 @@ func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseNa
     - APNS_BUNDLE_ID
     - APNS_PRIVATE_KEY
     - APNS_ENVIRONMENT
+  # default_secrets:
+  #   ENABLE_DEBUG_SWITCH: "false"
 
 `, functionsDir, migrationsDir)
 	}
@@ -545,6 +549,15 @@ worktree:
     - .env
     - .env.local
   auto_setup_xcconfig: true
+
+# environments:
+#   development:
+#     # Local overrides belong in .drift.local.yaml
+#     # secrets:
+#     #   ENABLE_DEBUG_SWITCH: "true"
+#   production:
+#     skip_secrets:
+#       - ENABLE_DEBUG_SWITCH
 `, wtPattern)
 
 	return config

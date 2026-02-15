@@ -77,7 +77,15 @@ drift deploy secrets [--branch <branch>] [--key-search-dir <path>...]
 - Any configured keys from `environments.<env>.secrets`
 
 If `supabase.secrets_to_push` is set in `.drift.yaml`, only those keys are pushed.
+`supabase.default_secrets` provides baseline values, and `environments.<env>.skip_secrets`
+can block keys for specific environments (for example production).
 Use `.drift.local.yaml` for secret values.
+
+APNs value sources:
+- `APNS_KEY_ID`: inferred from `AuthKey_<KEY_ID>.p8` filename, unless `APNS_KEY_ID` env var is set
+- `APNS_PRIVATE_KEY`: contents of matched `.p8` file, unless `APNS_PRIVATE_KEY` env var is set
+- `APNS_TEAM_ID` / `APNS_BUNDLE_ID`: `apple.team_id` / `apple.bundle_id` in config, overridable via env vars
+- `APNS_ENVIRONMENT`: from `apple.push_environment`, forced to `production` when target env is production, overridable via `APNS_ENVIRONMENT` env var
 
 ## drift deploy all
 
@@ -142,11 +150,14 @@ Configure environment-specific secrets in `.drift.yaml`:
 ```yaml
 environments:
   production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
     secrets:
       STRIPE_KEY: "sk_live_xxx"
     push_key: "AuthKey_PROD.p8"
   development:
     secrets:
+      ENABLE_DEBUG_SWITCH: "false"
       STRIPE_KEY: "sk_test_xxx"
     push_key: "AuthKey_DEV.p8"
 ```

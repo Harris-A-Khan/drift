@@ -390,6 +390,35 @@ func TestConfig_GetEnvironmentConfig_FeatureFallsBackToDevelopment(t *testing.T)
 	}
 }
 
+func TestConfig_GetEnvironmentConfig_FeatureOverridesDevelopment(t *testing.T) {
+	cfg := &Config{
+		Environments: map[string]EnvironmentConfig{
+			"development": {
+				Secrets: map[string]string{
+					"ENABLE_DEBUG_SWITCH": "true",
+					"API_BASE_URL":        "https://dev.example.com",
+				},
+			},
+			"feature": {
+				Secrets: map[string]string{
+					"ENABLE_DEBUG_SWITCH": "false",
+				},
+			},
+		},
+	}
+
+	feature := cfg.GetEnvironmentConfig("Feature")
+	if feature == nil {
+		t.Fatal("GetEnvironmentConfig(Feature) returned nil")
+	}
+	if got := feature.Secrets["ENABLE_DEBUG_SWITCH"]; got != "false" {
+		t.Fatalf("Feature ENABLE_DEBUG_SWITCH = %q, want %q", got, "false")
+	}
+	if got := feature.Secrets["API_BASE_URL"]; got != "https://dev.example.com" {
+		t.Fatalf("Feature inherited API_BASE_URL = %q, want %q", got, "https://dev.example.com")
+	}
+}
+
 func TestConfig_GetMigrationsPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".drift.yaml")
@@ -677,4 +706,68 @@ worktree:
 	if cfg.Worktree.CopyOnCreate[0] != ".env" {
 		t.Errorf("CopyOnCreate[0] = %q, want %q", cfg.Worktree.CopyOnCreate[0], ".env")
 	}
+}
+
+func TestMergeLocalConfig_MergesSkipSecrets(t *testing.T) {
+	main := &Config{
+		Environments: map[string]EnvironmentConfig{
+			"production": {
+				SkipSecrets: []string{"EXISTING_SECRET"},
+			},
+		},
+	}
+
+	local := &LocalConfig{
+		Environments: map[string]EnvironmentConfig{
+			"production": {
+				SkipSecrets: []string{"ENABLE_DEBUG_SWITCH", "EXISTING_SECRET"},
+			},
+		},
+	}
+
+	merged := MergeLocalConfig(main, local)
+	env := merged.Environments["production"]
+
+	if len(env.SkipSecrets) != 2 {
+		t.Fatalf("SkipSecrets length = %d, want 2 (%v)", len(env.SkipSecrets), env.SkipSecrets)
+	}
+	if !containsValue(env.SkipSecrets, "EXISTING_SECRET") {
+		t.Fatalf("SkipSecrets missing EXISTING_SECRET: %v", env.SkipSecrets)
+	}
+	if !containsValue(env.SkipSecrets, "ENABLE_DEBUG_SWITCH") {
+		t.Fatalf("SkipSecrets missing ENABLE_DEBUG_SWITCH: %v", env.SkipSecrets)
+	}
+}
+
+func TestConfig_GetEnvironmentConfig_MergesSkipSecretsFromFallback(t *testing.T) {
+	cfg := &Config{
+		Environments: map[string]EnvironmentConfig{
+			"development": {
+				SkipSecrets: []string{"ENABLE_DEBUG_SWITCH"},
+			},
+			"feature": {
+				SkipSecrets: []string{"FEATURE_ONLY_SECRET"},
+			},
+		},
+	}
+
+	feature := cfg.GetEnvironmentConfig("Feature")
+	if feature == nil {
+		t.Fatal("GetEnvironmentConfig(Feature) returned nil")
+	}
+	if !containsValue(feature.SkipSecrets, "ENABLE_DEBUG_SWITCH") {
+		t.Fatalf("Feature SkipSecrets missing fallback item: %v", feature.SkipSecrets)
+	}
+	if !containsValue(feature.SkipSecrets, "FEATURE_ONLY_SECRET") {
+		t.Fatalf("Feature SkipSecrets missing specific item: %v", feature.SkipSecrets)
+	}
+}
+
+func containsValue(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

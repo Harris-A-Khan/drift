@@ -56,15 +56,16 @@ func (p *ProjectConfig) IsWebPlatform() bool {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRef        string          `yaml:"project_ref" mapstructure:"project_ref"`
-	ProjectName       string          `yaml:"project_name" mapstructure:"project_name"`
-	FunctionsDir      string          `yaml:"functions_dir" mapstructure:"functions_dir"`
-	MigrationsDir     string          `yaml:"migrations_dir" mapstructure:"migrations_dir"`
-	ProtectedBranches []string        `yaml:"protected_branches" mapstructure:"protected_branches"`
-	OverrideBranch    string          `yaml:"override_branch" mapstructure:"override_branch"`
-	FallbackBranch    string          `yaml:"fallback_branch" mapstructure:"fallback_branch"`
-	SecretsToPush     []string        `yaml:"secrets_to_push" mapstructure:"secrets_to_push"`
-	Functions         FunctionsConfig `yaml:"functions" mapstructure:"functions"`
+	ProjectRef        string            `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string            `yaml:"project_name" mapstructure:"project_name"`
+	FunctionsDir      string            `yaml:"functions_dir" mapstructure:"functions_dir"`
+	MigrationsDir     string            `yaml:"migrations_dir" mapstructure:"migrations_dir"`
+	ProtectedBranches []string          `yaml:"protected_branches" mapstructure:"protected_branches"`
+	OverrideBranch    string            `yaml:"override_branch" mapstructure:"override_branch"`
+	FallbackBranch    string            `yaml:"fallback_branch" mapstructure:"fallback_branch"`
+	SecretsToPush     []string          `yaml:"secrets_to_push" mapstructure:"secrets_to_push"`
+	DefaultSecrets    map[string]string `yaml:"default_secrets" mapstructure:"default_secrets"`
+	Functions         FunctionsConfig   `yaml:"functions" mapstructure:"functions"`
 }
 
 // FunctionsConfig holds Edge Functions configuration.
@@ -80,8 +81,9 @@ type FunctionRestriction struct {
 
 // EnvironmentConfig holds per-environment configuration.
 type EnvironmentConfig struct {
-	Secrets map[string]string `yaml:"secrets" mapstructure:"secrets"`
-	PushKey string            `yaml:"push_key" mapstructure:"push_key"`
+	Secrets     map[string]string `yaml:"secrets" mapstructure:"secrets"`
+	PushKey     string            `yaml:"push_key" mapstructure:"push_key"`
+	SkipSecrets []string          `yaml:"skip_secrets" mapstructure:"skip_secrets"`
 }
 
 // GetTargetBranch returns the Supabase branch to use for a git branch.
@@ -370,13 +372,51 @@ func (c *Config) GetEnvironmentConfig(environment string) *EnvironmentConfig {
 	if c.Environments == nil {
 		return nil
 	}
+	keys := environmentLookupKeys(environment)
+	if len(keys) == 0 {
+		return nil
+	}
 
-	for _, key := range environmentLookupKeys(environment) {
-		if env, ok := c.Environments[key]; ok {
-			return &env
+	var merged EnvironmentConfig
+	found := false
+	skipSet := make(map[string]bool)
+
+	// Merge from least-specific to most-specific so specific keys override.
+	for i := len(keys) - 1; i >= 0; i-- {
+		key := keys[i]
+		env, ok := c.Environments[key]
+		if !ok {
+			continue
+		}
+		found = true
+
+		if env.PushKey != "" {
+			merged.PushKey = env.PushKey
+		}
+		if len(env.Secrets) > 0 {
+			if merged.Secrets == nil {
+				merged.Secrets = make(map[string]string)
+			}
+			for secretKey, secretValue := range env.Secrets {
+				merged.Secrets[secretKey] = secretValue
+			}
+		}
+		if len(env.SkipSecrets) > 0 {
+			for _, secretKey := range env.SkipSecrets {
+				secretKey = strings.TrimSpace(secretKey)
+				if secretKey == "" || skipSet[secretKey] {
+					continue
+				}
+				skipSet[secretKey] = true
+				merged.SkipSecrets = append(merged.SkipSecrets, secretKey)
+			}
 		}
 	}
-	return nil
+
+	if !found {
+		return nil
+	}
+	return &merged
 }
 
 // GetEnvironmentSecrets returns the secrets for a specific environment.

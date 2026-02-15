@@ -15,6 +15,7 @@ drift config <subcommand>
 | `show` | Show current configuration |
 | `set-branch` | Set the local Supabase branch override |
 | `clear-branch` | Clear the local Supabase branch override |
+| `set-secret` | Interactive secret policy setup |
 
 ---
 
@@ -181,6 +182,37 @@ supabase:
 ```
 
 Remove the `override_branch` line or use `drift config clear-branch` to disable.
+
+---
+
+## drift config set-secret
+
+Interactive wizard for secret placement and policy:
+
+```bash
+drift config set-secret [SECRET_NAME]
+```
+
+The wizard asks a short series of questions and updates:
+- `supabase.secrets_to_push` in `.drift.yaml`
+- `supabase.default_secrets` in `.drift.yaml`
+- `environments.<env>.secrets` in `.drift.local.yaml`
+- `environments.production.skip_secrets` in `.drift.yaml`
+
+### Hierarchy
+
+For feature branches, value resolution is:
+1. `environments.feature.secrets.<KEY>` (local override)
+2. `environments.development.secrets.<KEY>` (local fallback)
+3. `supabase.default_secrets.<KEY>` (shared baseline)
+
+Example:
+
+```bash
+drift config set-secret ENABLE_DEBUG_SWITCH
+```
+
+You can configure it to default to `false`, allow local development overrides, and skip pushing it to production.
 
 ## See Also
 

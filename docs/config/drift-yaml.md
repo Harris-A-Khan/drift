@@ -31,6 +31,9 @@ supabase:
     - APNS_BUNDLE_ID
     - APNS_PRIVATE_KEY
     - APNS_ENVIRONMENT
+    - ENABLE_DEBUG_SWITCH
+  default_secrets:                      # Baseline values (can be overridden per environment/local)
+    ENABLE_DEBUG_SWITCH: "false"
 
 # Xcode configuration
 xcode:
@@ -92,6 +95,9 @@ supabase:
     - APNS_BUNDLE_ID
     - APNS_PRIVATE_KEY
     - APNS_ENVIRONMENT
+    - ENABLE_DEBUG_SWITCH
+  default_secrets:
+    ENABLE_DEBUG_SWITCH: "false"
 ```
 
 | Field | Description | Default |
@@ -102,6 +108,7 @@ supabase:
 | `migrations_dir` | Path to migrations | `supabase/migrations` |
 | `protected_branches` | Branches requiring confirmation | `["main", "master"]` |
 | `secrets_to_push` | Secret names Drift should push | all discovered values when unset |
+| `default_secrets` | Baseline secret values before environment overrides | `{}` |
 
 The `project_ref` replaces the need for a separate `.supabase-project-ref` file.
 
@@ -210,8 +217,12 @@ Keep sensitive values in `.drift.local.yaml` when possible:
 ```yaml
 environments:
   production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
     push_key: "AuthKey_PROD.p8"
   development:
+    secrets:
+      ENABLE_DEBUG_SWITCH: "false"
     push_key: "AuthKey_DEV.p8"
 ```
 
@@ -219,8 +230,16 @@ environments:
 |-------|-------------|
 | `secrets` | Key-value map of secrets for this environment (local values override shared values) |
 | `push_key` | APNs .p8 key file for this environment |
+| `skip_secrets` | Secret names that should NOT be pushed for this environment |
 
-When running `drift deploy secrets`, Drift merges `.drift.yaml` and `.drift.local.yaml`, then pushes only the keys listed in `supabase.secrets_to_push` (or all discovered keys when unset).
+When running `drift deploy secrets`, Drift:
+1. Starts with `supabase.default_secrets`
+2. Overlays APNs-derived values and `environments.<env>.secrets`
+3. Applies local overrides from `.drift.local.yaml`
+4. Removes keys in `environments.<env>.skip_secrets`
+5. Pushes only keys listed in `supabase.secrets_to_push` (or all discovered keys when unset)
+
+Use `drift config set-secret <KEY>` to configure this interactively.
 
 ### functions
 

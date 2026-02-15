@@ -15,6 +15,7 @@ func DefaultConfig() *Config {
 			ProtectedBranches: []string{"main", "master"},
 			FallbackBranch:    "",
 			SecretsToPush:     []string{},
+			DefaultSecrets:    map[string]string{},
 			Functions:         FunctionsConfig{Restricted: []FunctionRestriction{}},
 		},
 		Environments: map[string]EnvironmentConfig{},

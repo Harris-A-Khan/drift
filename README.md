@@ -108,6 +108,7 @@ drift config show           # Show current configuration
 drift config set-branch     # Interactive: set local Supabase branch override
 drift config set-branch X   # Force local override branch (non-production)
 drift config clear-branch   # Clear local override, use auto-detection
+drift config set-secret KEY # Interactive secret policy wizard
 ```
 
 ### Worktree Management (`drift worktree` / `drift wt`)
@@ -262,6 +263,10 @@ environments:
   development:
     secrets:
       API_BASE_URL: "https://dev-api.example.com"
+      ENABLE_DEBUG_SWITCH: "true"
+  production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
 
 device:
   default_device: "My iPhone"
@@ -292,6 +297,9 @@ supabase:
     - APNS_BUNDLE_ID
     - APNS_PRIVATE_KEY
     - APNS_ENVIRONMENT
+    - ENABLE_DEBUG_SWITCH
+  default_secrets:
+    ENABLE_DEBUG_SWITCH: "false"
 
 apple:  # iOS/macOS only
   team_id: "XXXXXXXXXX"
@@ -327,8 +335,12 @@ worktree:
 # Per-environment configuration
 environments:
   production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
     push_key: "AuthKey_PROD.p8"
   development:
+    secrets:
+      ENABLE_DEBUG_SWITCH: "false" # baseline value, can be overridden in .drift.local.yaml
     push_key: "AuthKey_DEV.p8"
 
 # Function deployment restrictions
@@ -340,6 +352,8 @@ functions:
 
 Secret values should generally live in `.drift.local.yaml` (gitignored), while
 `supabase.secrets_to_push` in `.drift.yaml` controls which keys Drift will set.
+Use `supabase.default_secrets` for shared defaults and `environments.<env>.skip_secrets`
+to prevent keys (for example `ENABLE_DEBUG_SWITCH`) from being pushed on production.
 
 ## Environment Variables
 

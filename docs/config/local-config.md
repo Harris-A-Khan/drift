@@ -50,6 +50,9 @@ environments:
     secrets:
       API_BASE_URL: "https://dev-api.example.com"
       ENABLE_DEBUG_SWITCH: "true"
+  production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
 
 apple:
   key_search_paths:
@@ -98,9 +101,12 @@ environments:
   production:
     secrets:
       API_BASE_URL: "https://api.example.com"
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
 ```
 
 These values override `.drift.yaml` values and are ideal for sensitive secrets.
+`skip_secrets` can be used locally to prevent accidental pushes for specific environments.
 
 ### apple
 
@@ -209,6 +215,9 @@ environments:
   development:
     secrets:
       API_BASE_URL: "https://dev-api.example.com"
+  production:
+    skip_secrets:
+      - ENABLE_DEBUG_SWITCH
 
 # Local APNs key lookup overrides
 apple:

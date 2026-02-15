@@ -65,7 +65,9 @@ This configures secrets that are available to Edge Functions at runtime:
 
 If supabase.secrets_to_push is configured in .drift.yaml, only those
 keys are pushed.
-Values are typically defined in .drift.local.yaml under environments.<env>.secrets.`,
+Baseline values can be set in supabase.default_secrets.
+Values are typically defined in .drift.local.yaml under environments.<env>.secrets.
+Use environments.<env>.skip_secrets to avoid pushing keys on specific environments.`,
 	Example: `  drift deploy secrets           # Set secrets for current environment
   drift deploy secrets -b feature/x   # Set secrets for a specific branch
   drift deploy secrets --key-search-dir ../shared-keys`,
@@ -348,6 +350,9 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	)
 
 	availableSecrets := make(map[string]string)
+	for key, value := range cfg.Supabase.DefaultSecrets {
+		availableSecrets[key] = value
+	}
 
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not load APNs secrets: %v", err))
@@ -370,14 +375,35 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	secretsToPush, missingConfigured := selectSecretsToPush(cfg.Supabase.SecretsToPush, availableSecrets)
+	skippedByPolicy := make(map[string]bool)
+	if envConfig != nil && len(envConfig.SkipSecrets) > 0 {
+		for _, key := range envConfig.SkipSecrets {
+			if key == "" {
+				continue
+			}
+			skippedByPolicy[key] = true
+			delete(availableSecrets, key)
+		}
+	}
+
+	if len(skippedByPolicy) > 0 {
+		ui.Infof("Skipping secrets by environment policy: %s", stringsJoinSorted(secretSetKeys(skippedByPolicy)))
+	}
+
+	secretsToPush, missingConfigured, configuredSkipped := selectSecretsToPush(cfg.Supabase.SecretsToPush, availableSecrets, skippedByPolicy)
 	if IsVerbose() {
 		if len(cfg.Supabase.SecretsToPush) > 0 {
 			ui.Infof("Configured supabase.secrets_to_push: %s", stringsJoinSorted(cfg.Supabase.SecretsToPush))
 		} else {
 			ui.Info("No supabase.secrets_to_push configured; pushing all discovered secrets")
 		}
+		if len(cfg.Supabase.DefaultSecrets) > 0 {
+			ui.Infof("Configured supabase.default_secrets: %s", stringsJoinSorted(secretMapKeys(cfg.Supabase.DefaultSecrets)))
+		}
 		ui.Infof("Discovered %d secret candidate(s): %s", len(availableSecrets), stringsJoinSorted(secretMapKeys(availableSecrets)))
+	}
+	if len(configuredSkipped) > 0 {
+		ui.Infof("Configured secrets skipped by policy: %s", stringsJoinSorted(configuredSkipped))
 	}
 	if len(missingConfigured) > 0 {
 		ui.Warningf("Configured secrets not available for this run: %s", stringsJoinSorted(missingConfigured))
@@ -385,7 +411,7 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 
 	if len(secretsToPush) == 0 {
 		ui.Warning("No secrets selected to push")
-		ui.Info("Update supabase.secrets_to_push or environment-specific secrets in .drift.yaml")
+		ui.Info("Update supabase.secrets_to_push/default_secrets or environment secrets in .drift.yaml/.drift.local.yaml")
 		return nil
 	}
 
@@ -560,14 +586,15 @@ func resolveSearchDirs(projectRoot string, rawPaths []string) []string {
 	return dirs
 }
 
-func selectSecretsToPush(configured []string, available map[string]string) ([]supabase.Secret, []string) {
+func selectSecretsToPush(configured []string, available map[string]string, skipped map[string]bool) ([]supabase.Secret, []string, []string) {
 	if len(available) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	seenConfigured := make(map[string]bool)
 	var selected []string
 	var missing []string
+	var skippedConfigured []string
 
 	if len(configured) > 0 {
 		for _, key := range configured {
@@ -575,6 +602,10 @@ func selectSecretsToPush(configured []string, available map[string]string) ([]su
 				continue
 			}
 			seenConfigured[key] = true
+			if skipped[key] {
+				skippedConfigured = append(skippedConfigured, key)
+				continue
+			}
 			if _, ok := available[key]; ok {
 				selected = append(selected, key)
 			} else {
@@ -589,13 +620,14 @@ func selectSecretsToPush(configured []string, available map[string]string) ([]su
 
 	sort.Strings(selected)
 	sort.Strings(missing)
+	sort.Strings(skippedConfigured)
 
 	secrets := make([]supabase.Secret, 0, len(selected))
 	for _, key := range selected {
 		secrets = append(secrets, supabase.Secret{Name: key, Value: available[key]})
 	}
 
-	return secrets, missing
+	return secrets, missing, skippedConfigured
 }
 
 func stringsJoinSecretNames(secrets []supabase.Secret) string {
@@ -617,6 +649,15 @@ func stringsJoinSorted(values []string) string {
 }
 
 func secretMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func secretSetKeys(values map[string]bool) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

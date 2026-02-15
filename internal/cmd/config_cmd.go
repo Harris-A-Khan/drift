@@ -54,6 +54,7 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetBranchCmd)
 	configCmd.AddCommand(configClearBranchCmd)
+	configCmd.AddCommand(configSetSecretCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
