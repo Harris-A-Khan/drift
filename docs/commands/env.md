@@ -68,7 +68,7 @@ drift env setup [flags]
 
 1. Detects current git branch
 2. Links Supabase if not already linked (prompts for project ref if needed)
-3. Resolves matching Supabase branch (or falls back to development)
+3. Resolves matching Supabase branch (or uses configured fallback policy)
 4. Fetches API keys from Supabase
 5. Generates the appropriate config file
 

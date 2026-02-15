@@ -11,15 +11,15 @@ import (
 
 // Config represents the .drift.yaml configuration file.
 type Config struct {
-	Project      ProjectConfig             `yaml:"project" mapstructure:"project"`
-	Supabase     SupabaseConfig            `yaml:"supabase" mapstructure:"supabase"`
-	Apple        AppleConfig               `yaml:"apple" mapstructure:"apple"`
-	Xcode        XcodeConfig               `yaml:"xcode" mapstructure:"xcode"`
-	Web          WebConfig                 `yaml:"web" mapstructure:"web"`
-	Database     DatabaseConfig            `yaml:"database" mapstructure:"database"`
-	Backup       BackupConfig              `yaml:"backup" mapstructure:"backup"`
-	Worktree     WorktreeConfig            `yaml:"worktree" mapstructure:"worktree"`
-	Device       DeviceConfig              `yaml:"device" mapstructure:"device"`
+	Project      ProjectConfig                `yaml:"project" mapstructure:"project"`
+	Supabase     SupabaseConfig               `yaml:"supabase" mapstructure:"supabase"`
+	Apple        AppleConfig                  `yaml:"apple" mapstructure:"apple"`
+	Xcode        XcodeConfig                  `yaml:"xcode" mapstructure:"xcode"`
+	Web          WebConfig                    `yaml:"web" mapstructure:"web"`
+	Database     DatabaseConfig               `yaml:"database" mapstructure:"database"`
+	Backup       BackupConfig                 `yaml:"backup" mapstructure:"backup"`
+	Worktree     WorktreeConfig               `yaml:"worktree" mapstructure:"worktree"`
+	Device       DeviceConfig                 `yaml:"device" mapstructure:"device"`
 	Environments map[string]EnvironmentConfig `yaml:"environments" mapstructure:"environments"`
 
 	// Preferences from .drift.local.yaml (merged at runtime)
@@ -55,13 +55,15 @@ func (p *ProjectConfig) IsWebPlatform() bool {
 
 // SupabaseConfig holds Supabase-related configuration.
 type SupabaseConfig struct {
-	ProjectRef        string                `yaml:"project_ref" mapstructure:"project_ref"`
-	ProjectName       string                `yaml:"project_name" mapstructure:"project_name"`
-	FunctionsDir      string                `yaml:"functions_dir" mapstructure:"functions_dir"`
-	MigrationsDir     string                `yaml:"migrations_dir" mapstructure:"migrations_dir"`
-	ProtectedBranches []string              `yaml:"protected_branches" mapstructure:"protected_branches"`
-	OverrideBranch    string                `yaml:"override_branch" mapstructure:"override_branch"`
-	Functions         FunctionsConfig       `yaml:"functions" mapstructure:"functions"`
+	ProjectRef        string          `yaml:"project_ref" mapstructure:"project_ref"`
+	ProjectName       string          `yaml:"project_name" mapstructure:"project_name"`
+	FunctionsDir      string          `yaml:"functions_dir" mapstructure:"functions_dir"`
+	MigrationsDir     string          `yaml:"migrations_dir" mapstructure:"migrations_dir"`
+	ProtectedBranches []string        `yaml:"protected_branches" mapstructure:"protected_branches"`
+	OverrideBranch    string          `yaml:"override_branch" mapstructure:"override_branch"`
+	FallbackBranch    string          `yaml:"fallback_branch" mapstructure:"fallback_branch"`
+	SecretsToPush     []string        `yaml:"secrets_to_push" mapstructure:"secrets_to_push"`
+	Functions         FunctionsConfig `yaml:"functions" mapstructure:"functions"`
 }
 
 // FunctionsConfig holds Edge Functions configuration.
@@ -98,11 +100,12 @@ func (c *SupabaseConfig) HasOverride() bool {
 
 // AppleConfig holds Apple Developer configuration for iOS/macOS projects.
 type AppleConfig struct {
-	TeamID          string `yaml:"team_id" mapstructure:"team_id"`
-	BundleID        string `yaml:"bundle_id" mapstructure:"bundle_id"`
-	PushKeyPattern  string `yaml:"push_key_pattern" mapstructure:"push_key_pattern"`
-	PushEnvironment string `yaml:"push_environment" mapstructure:"push_environment"` // development, production
-	SecretsDir      string `yaml:"secrets_dir" mapstructure:"secrets_dir"`           // directory for API keys, certs (default: secrets)
+	TeamID          string   `yaml:"team_id" mapstructure:"team_id"`
+	BundleID        string   `yaml:"bundle_id" mapstructure:"bundle_id"`
+	PushKeyPattern  string   `yaml:"push_key_pattern" mapstructure:"push_key_pattern"`
+	PushEnvironment string   `yaml:"push_environment" mapstructure:"push_environment"` // development, production
+	SecretsDir      string   `yaml:"secrets_dir" mapstructure:"secrets_dir"`           // directory for API keys, certs (default: secrets)
+	KeySearchPaths  []string `yaml:"key_search_paths" mapstructure:"key_search_paths"` // search paths for APNs key files
 }
 
 // XcodeConfig holds Xcode-related configuration.
@@ -191,7 +194,7 @@ func LoadFromPath(configPath string) (*Config, error) {
 
 // LoadOrDefault tries to load config, returns defaults if not found.
 func LoadOrDefault() *Config {
-	cfg, err := Load()
+	cfg, err := LoadWithLocal()
 	if err != nil {
 		return DefaultConfig()
 	}
@@ -407,4 +410,3 @@ func (c *Config) GetEditor() string {
 func (c *Config) ShouldAutoOpenWorktree() bool {
 	return c.Preferences.AutoOpenWorktree
 }
-

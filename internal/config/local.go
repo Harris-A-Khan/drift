@@ -4,21 +4,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // LocalConfig represents the .drift.local.yaml configuration file (gitignored).
 // This file contains branch/developer-specific overrides.
 type LocalConfig struct {
-	Supabase    LocalSupabaseConfig    `yaml:"supabase" mapstructure:"supabase"`
-	Device      LocalDeviceConfig      `yaml:"device" mapstructure:"device"`
-	Preferences PreferencesConfig      `yaml:"preferences" mapstructure:"preferences"`
+	Supabase     LocalSupabaseConfig          `yaml:"supabase" mapstructure:"supabase"`
+	Apple        LocalAppleConfig             `yaml:"apple" mapstructure:"apple"`
+	Device       LocalDeviceConfig            `yaml:"device" mapstructure:"device"`
+	Environments map[string]EnvironmentConfig `yaml:"environments" mapstructure:"environments"`
+	Preferences  PreferencesConfig            `yaml:"preferences" mapstructure:"preferences"`
 }
 
 // LocalSupabaseConfig holds local Supabase overrides.
 type LocalSupabaseConfig struct {
 	OverrideBranch string `yaml:"override_branch" mapstructure:"override_branch"`
+	FallbackBranch string `yaml:"fallback_branch" mapstructure:"fallback_branch"`
+}
+
+// LocalAppleConfig holds local Apple/APNs overrides.
+type LocalAppleConfig struct {
+	KeySearchPaths []string `yaml:"key_search_paths" mapstructure:"key_search_paths"`
 }
 
 // LocalDeviceConfig holds local device overrides.
@@ -100,10 +110,41 @@ func MergeLocalConfig(main *Config, local *LocalConfig) *Config {
 	if local.Supabase.OverrideBranch != "" {
 		main.Supabase.OverrideBranch = local.Supabase.OverrideBranch
 	}
+	if local.Supabase.FallbackBranch != "" {
+		main.Supabase.FallbackBranch = local.Supabase.FallbackBranch
+	}
+
+	// Override Apple settings
+	if len(local.Apple.KeySearchPaths) > 0 {
+		main.Apple.KeySearchPaths = local.Apple.KeySearchPaths
+	}
 
 	// Override Device settings
 	if local.Device.DefaultDevice != "" {
 		main.Device.DefaultDevice = local.Device.DefaultDevice
+	}
+
+	// Merge per-environment local secrets and push key overrides
+	if len(local.Environments) > 0 {
+		if main.Environments == nil {
+			main.Environments = make(map[string]EnvironmentConfig)
+		}
+
+		for envName, localEnv := range local.Environments {
+			mainEnv := main.Environments[envName]
+			if localEnv.PushKey != "" {
+				mainEnv.PushKey = localEnv.PushKey
+			}
+			if len(localEnv.Secrets) > 0 {
+				if mainEnv.Secrets == nil {
+					mainEnv.Secrets = make(map[string]string)
+				}
+				for key, value := range localEnv.Secrets {
+					mainEnv.Secrets[key] = value
+				}
+			}
+			main.Environments[envName] = mainEnv
+		}
 	}
 
 	// Store preferences in config
@@ -154,6 +195,24 @@ func GenerateLocalConfigContent() string {
 # Supabase branch overrides
 # supabase:
 #   override_branch: "feat-my-feature"  # Always use this Supabase branch
+#   fallback_branch: "development"       # Used when no matching branch exists
+
+# Local APNs key search overrides
+# apple:
+#   key_search_paths:
+#     - "secrets"        # Relative to project root
+#     - "../shared-keys" # Relative path outside project
+#     - "/abs/path/to/keys" # Absolute path
+
+# Local secret values (keep sensitive values out of .drift.yaml)
+# environments:
+#   development:
+#     secrets:
+#       ENABLE_DEBUG_SWITCH: "true"
+#       API_BASE_URL: "https://dev-api.example.com"
+#   production:
+#     secrets:
+#       ENABLE_DEBUG_SWITCH: "false"
 
 # Device preferences
 # device:
@@ -197,6 +256,66 @@ func AddToGitignore(projectRoot string) error {
 	newContent += LocalConfigFilename + "\n"
 
 	return os.WriteFile(gitignorePath, []byte(newContent), 0644)
+}
+
+// UpdateLocalSupabaseOverrides updates Supabase override fields in .drift.local.yaml.
+func UpdateLocalSupabaseOverrides(localPath, overrideBranch, fallbackBranch string) error {
+	cfg := make(map[string]interface{})
+
+	// Read existing content if present.
+	if data, err := os.ReadFile(localPath); err == nil && strings.TrimSpace(string(data)) != "" {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return err
+		}
+	}
+
+	supabaseSection, ok := cfg["supabase"].(map[string]interface{})
+	if !ok {
+		supabaseSection = make(map[string]interface{})
+		cfg["supabase"] = supabaseSection
+	}
+
+	if overrideBranch != "" {
+		supabaseSection["override_branch"] = overrideBranch
+	}
+	if fallbackBranch != "" {
+		supabaseSection["fallback_branch"] = fallbackBranch
+	}
+
+	newData, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(localPath, newData, 0644)
+}
+
+// ClearLocalSupabaseOverride removes supabase.override_branch from .drift.local.yaml.
+func ClearLocalSupabaseOverride(localPath string) error {
+	cfg := make(map[string]interface{})
+
+	if data, err := os.ReadFile(localPath); err == nil && strings.TrimSpace(string(data)) != "" {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return err
+		}
+	}
+
+	supabaseSection, ok := cfg["supabase"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	delete(supabaseSection, "override_branch")
+	if len(supabaseSection) == 0 {
+		delete(cfg, "supabase")
+	}
+
+	newData, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(localPath, newData, 0644)
 }
 
 // contains checks if a string contains a substring (line-aware).

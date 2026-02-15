@@ -25,6 +25,11 @@ The env command helps you manage which Supabase environment your project
 is configured to use. It auto-detects your git branch and maps it to the
 appropriate Supabase branch (production, development, or feature).
 
+If no matching branch exists, Drift uses fallback resolution in this order:
+  1) --fallback-branch flag
+  2) supabase.fallback_branch from .drift.local.yaml
+  3) interactive non-production branch selection.
+
 For web projects, it generates .env.local with all Supabase credentials.
 For iOS/macOS projects, it generates Config.xcconfig.`,
 }
@@ -132,10 +137,8 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	ui.Header("Environment Info")
 
-	// Get Supabase branch info (with override support)
 	client := supabase.NewClient()
-	overrideBranch := cfg.Supabase.OverrideBranch
-	info, err := client.GetBranchInfoWithOverride(gitBranch, overrideBranch)
+	info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, gitBranch, "")
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -156,7 +159,7 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	if info.IsFallback {
 		ui.NewLine()
-		ui.Warning("Using fallback: no Supabase branch exists for this git branch")
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
 	}
 
 	// Check config file status based on project type
@@ -230,16 +233,8 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current git branch: %w", err)
 	}
 
-	targetBranch := gitBranch
 	if envBranchFlag != "" {
-		targetBranch = envBranchFlag
 		ui.Infof("Using branch override: %s", envBranchFlag)
-	}
-
-	// Apply override from config (if no flag override)
-	overrideBranch := ""
-	if envBranchFlag == "" && cfg.Supabase.OverrideBranch != "" {
-		overrideBranch = cfg.Supabase.OverrideBranch
 	}
 
 	// Ensure Supabase is linked (uses project_ref from config)
@@ -253,7 +248,7 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 	sp := ui.NewSpinner("Resolving Supabase branch")
 	sp.Start()
 
-	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
+	info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, gitBranch, envBranchFlag)
 	if err != nil {
 		sp.Fail("Failed to resolve Supabase branch")
 		return err
@@ -265,7 +260,7 @@ func runEnvSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	if info.IsFallback {
-		ui.Warningf("No Supabase branch for '%s', using fallback to development", targetBranch)
+		ui.Warningf("No exact Supabase branch match for '%s', using fallback target '%s'", info.GitBranch, info.SupabaseBranch.GitBranch)
 	}
 
 	// Fetch API keys and secrets
@@ -1224,4 +1219,3 @@ func truncateValue(value string, maxLen int) string {
 	}
 	return value[:maxLen-3] + "..."
 }
-

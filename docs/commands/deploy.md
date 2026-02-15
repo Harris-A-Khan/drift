@@ -23,6 +23,7 @@ drift deploy <subcommand> [flags]
 | Flag | Description |
 |------|-------------|
 | `--branch`, `-b` | Target Supabase branch (auto-detected from git) |
+| `--fallback-branch` | Fallback branch when no exact match exists |
 
 ## drift deploy functions
 
@@ -31,6 +32,11 @@ Deploy all Edge Functions to the target environment.
 ```bash
 drift deploy functions [--branch <branch>]
 ```
+
+If no exact branch exists, Drift resolves fallback in this order:
+1. `--fallback-branch`
+2. `supabase.fallback_branch` from `.drift.local.yaml`
+3. Interactive non-production selection
 
 **Example:**
 
@@ -55,10 +61,10 @@ $ drift deploy functions
 
 ## drift deploy secrets
 
-Set APNs and debug secrets for the target environment.
+Set configured secrets for the target environment.
 
 ```bash
-drift deploy secrets [--branch <branch>]
+drift deploy secrets [--branch <branch>] [--key-search-dir <path>...]
 ```
 
 **What It Sets:**
@@ -68,7 +74,10 @@ drift deploy secrets [--branch <branch>]
 - `APNS_KEY_ID` - APNs Key ID
 - `APNS_PRIVATE_KEY` - APNs Private Key (from .p8 file)
 - `APNS_ENVIRONMENT` - "sandbox" or "production"
-- `DEBUG_SWITCH` - Enabled for non-production environments
+- Any configured keys from `environments.<env>.secrets`
+
+If `supabase.secrets_to_push` is set in `.drift.yaml`, only those keys are pushed.
+Use `.drift.local.yaml` for secret values.
 
 ## drift deploy all
 
@@ -121,7 +130,7 @@ $ drift deploy list-secrets
   • APNS_BUNDLE_ID
   • APNS_KEY_ID
   • APNS_PRIVATE_KEY
-  • DEBUG_SWITCH
+  • API_BASE_URL
 
 → Total: 5 secrets
 ```
@@ -134,12 +143,10 @@ Configure environment-specific secrets in `.drift.yaml`:
 environments:
   production:
     secrets:
-      APNS_KEY_ID: "KEY_PROD_123"
       STRIPE_KEY: "sk_live_xxx"
     push_key: "AuthKey_PROD.p8"
   development:
     secrets:
-      APNS_KEY_ID: "KEY_DEV_456"
       STRIPE_KEY: "sk_test_xxx"
     push_key: "AuthKey_DEV.p8"
 ```
@@ -162,11 +169,7 @@ $ drift deploy secrets
   Setting APNS_KEY_ID... ✓
   Setting STRIPE_KEY... ✓
 
-───── Common Secrets
-  Setting APNS_TEAM_ID... ✓
-  Setting APNS_PRIVATE_KEY... ✓
-
-✓ Successfully set 4 secrets
+✓ Successfully set configured secrets
 ```
 
 ## Function Restrictions
@@ -196,13 +199,14 @@ $ drift deploy functions
 
 ## Production Safeguards
 
-When deploying to production, Drift requires confirmation:
+When deploying to production (or protected branches), Drift requires strict confirmation.
+Deploying to development also requires confirmation.
 
 ```bash
 $ drift deploy all
 
 ⚠ You are about to deploy to PRODUCTION!
-? Continue? [y/N]
+Type 'yes' to confirm: _
 ```
 
 Use `--yes` or `-y` to skip confirmation (for CI/CD).

@@ -22,7 +22,15 @@ supabase:
   project_name: my-project              # Supabase project display name
   functions_dir: supabase/functions     # Path to edge functions
   migrations_dir: supabase/migrations   # Path to migrations
-  override_branch: v2/migration         # Optional: override Supabase branch detection
+  protected_branches:
+    - main
+    - master
+  secrets_to_push:                      # Secret keys Drift should push
+    - APNS_KEY_ID
+    - APNS_TEAM_ID
+    - APNS_BUNDLE_ID
+    - APNS_PRIVATE_KEY
+    - APNS_ENVIRONMENT
 
 # Xcode configuration
 xcode:
@@ -33,19 +41,16 @@ xcode:
     development: MyApp-Dev
     feature: MyApp
 
-# Git settings
-git:
-  protected_branches:                   # Branches that require confirmation
-    - main
-    - master
-    - production
-
 # APNs configuration
-apns:
+apple:
   team_id: XXXXXXXXXX                   # Apple Developer Team ID
   bundle_id: com.example.myapp          # App Bundle ID
-  key_pattern: "AuthKey_*.p8"           # Pattern to find .p8 key file
-  environment: sandbox                  # sandbox or production
+  push_key_pattern: "AuthKey_*.p8"      # Pattern to find .p8 key file
+  push_environment: development         # development or production
+  key_search_paths:                     # APNs key search paths (relative to project root unless absolute)
+    - secrets
+    - .
+    - ..
 
 # Database settings
 database:
@@ -81,7 +86,12 @@ supabase:
   protected_branches:
     - main
     - master
-  override_branch: v2/migration
+  secrets_to_push:
+    - APNS_KEY_ID
+    - APNS_TEAM_ID
+    - APNS_BUNDLE_ID
+    - APNS_PRIVATE_KEY
+    - APNS_ENVIRONMENT
 ```
 
 | Field | Description | Default |
@@ -91,7 +101,7 @@ supabase:
 | `functions_dir` | Path to Edge Functions | `supabase/functions` |
 | `migrations_dir` | Path to migrations | `supabase/migrations` |
 | `protected_branches` | Branches requiring confirmation | `["main", "master"]` |
-| `override_branch` | Force use of specific Supabase branch | (none) |
+| `secrets_to_push` | Secret names Drift should push | all discovered values when unset |
 
 The `project_ref` replaces the need for a separate `.supabase-project-ref` file.
 
@@ -101,17 +111,20 @@ By default, drift resolves Supabase branches as follows:
 
 1. **main** git branch → production Supabase branch
 2. **development** git branch → development Supabase branch
-3. **Other branches** → find matching Supabase branch by name, fallback to development
+3. **Other branches** → find matching Supabase branch by name
+4. If no match exists: use `--fallback-branch`, then `supabase.fallback_branch` from `.drift.local.yaml`, then interactive non-production selection
 
-#### Override Branch
+#### Local Override/Fallback
 
-The `override_branch` field forces drift to use a specific Supabase branch instead of automatic detection. This is useful when:
+Use `.drift.local.yaml` for branch-specific overrides:
 
-- You're iterating on migrations in a child branch but want to use an existing Supabase branch
-- You want to test against a specific environment
-- No Supabase branch exists for your current git branch
+```yaml
+supabase:
+  override_branch: v2/migration
+  fallback_branch: development
+```
 
-Set the override interactively:
+Set the local override interactively:
 ```bash
 drift config set-branch           # Interactive selection
 drift config set-branch v2/migration  # Direct set
@@ -141,28 +154,27 @@ xcode:
 | `version_file` | Version info file | `Version.xcconfig` |
 | `schemes` | Environment to scheme mapping | Auto-detected |
 
-### git
-
-> **Note:** Protected branches are now configured under `supabase.protected_branches`.
-
-Protected branches require confirmation for destructive operations like `drift migrate push`.
-
-### apns
+### apple
 
 ```yaml
-apns:
+apple:
   team_id: XXXXXXXXXX
   bundle_id: com.example.myapp
-  key_pattern: "AuthKey_*.p8"
-  environment: sandbox
+  push_key_pattern: "AuthKey_*.p8"
+  push_environment: development
+  key_search_paths:
+    - secrets
+    - .
+    - ..
 ```
 
 | Field | Description | Required |
 |-------|-------------|----------|
 | `team_id` | Apple Developer Team ID | Yes |
 | `bundle_id` | App Bundle Identifier | Yes |
-| `key_pattern` | Glob pattern for .p8 file | Yes |
-| `environment` | `sandbox` or `production` | No (auto-detected) |
+| `push_key_pattern` | Glob pattern for .p8 file | Yes |
+| `push_environment` | `development` or `production` | No (auto-detected) |
+| `key_search_paths` | Ordered APNs key search directories | No (`["secrets", ".", ".."]`) |
 
 ### database
 
@@ -192,29 +204,23 @@ backup:
 
 ### environments
 
-Configure environment-specific settings for production and development:
+Configure environment-specific settings for production and development.
+Keep sensitive values in `.drift.local.yaml` when possible:
 
 ```yaml
 environments:
   production:
-    secrets:
-      APNS_KEY_ID: "KEY_PROD_123"
-      STRIPE_KEY: "sk_live_xxx"
-      CUSTOM_SECRET: "value"
     push_key: "AuthKey_PROD.p8"
   development:
-    secrets:
-      APNS_KEY_ID: "KEY_DEV_456"
-      STRIPE_KEY: "sk_test_xxx"
     push_key: "AuthKey_DEV.p8"
 ```
 
 | Field | Description |
 |-------|-------------|
-| `secrets` | Key-value map of secrets specific to this environment |
+| `secrets` | Key-value map of secrets for this environment (local values override shared values) |
 | `push_key` | APNs .p8 key file for this environment |
 
-When running `drift deploy secrets`, the appropriate environment-specific secrets are automatically used.
+When running `drift deploy secrets`, Drift merges `.drift.yaml` and `.drift.local.yaml`, then pushes only the keys listed in `supabase.secrets_to_push` (or all discovered keys when unset).
 
 ### functions
 

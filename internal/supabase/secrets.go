@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/undrift/drift/pkg/shell"
@@ -203,6 +204,15 @@ type APNSSecrets struct {
 	Environment string // "development" or "production"
 }
 
+// APNSLookupInfo describes how Drift searched for an APNs key.
+type APNSLookupInfo struct {
+	Pattern      string
+	SearchDirs   []string
+	MatchedFile  string
+	UsedEnvKeyID bool
+	UsedEnvKey   bool
+}
+
 // SetAPNSSecrets sets all APNs-related secrets.
 func (c *Client) SetAPNSSecrets(projectRef string, apns APNSSecrets) error {
 	secrets := []Secret{
@@ -223,51 +233,92 @@ func LoadAPNSSecretsFromConfig(teamID, bundleID, keyPattern, environment, projec
 
 // LoadAPNSSecretsFromConfigWithSecretsDir loads APNs secrets with a custom secrets directory.
 func LoadAPNSSecretsFromConfigWithSecretsDir(teamID, bundleID, keyPattern, environment, projectRoot, secretsDir string) (*APNSSecrets, error) {
+	secrets, _, err := LoadAPNSSecretsFromConfigWithSearchPaths(
+		teamID,
+		bundleID,
+		keyPattern,
+		environment,
+		projectRoot,
+		secretsDir,
+		nil,
+	)
+	return secrets, err
+}
+
+// LoadAPNSSecretsFromConfigWithSearchPaths loads APNs secrets with custom key search paths.
+// If searchPaths is empty, defaults are used: secretsDir, project root, then project parent.
+func LoadAPNSSecretsFromConfigWithSearchPaths(teamID, bundleID, keyPattern, environment, projectRoot, secretsDir string, searchPaths []string) (*APNSSecrets, *APNSLookupInfo, error) {
 	secrets := &APNSSecrets{
 		TeamID:      teamID,
 		BundleID:    bundleID,
 		Environment: environment,
 	}
-
-	// Try to find the .p8 key file in multiple locations
-	var keyFiles []string
-	var err error
-
-	// 1. First try secrets directory (e.g., secrets/AuthKey_*.p8)
-	if secretsDir != "" {
-		keyFiles, err = filepath.Glob(filepath.Join(projectRoot, secretsDir, keyPattern))
+	lookup := &APNSLookupInfo{
+		Pattern: keyPattern,
 	}
 
-	// 2. Try project root (e.g., ./AuthKey_*.p8)
-	if err != nil || len(keyFiles) == 0 {
-		keyFiles, err = filepath.Glob(filepath.Join(projectRoot, keyPattern))
+	// Determine search order.
+	paths := searchPaths
+	if len(paths) == 0 {
+		if secretsDir != "" {
+			paths = append(paths, secretsDir)
+		}
+		paths = append(paths, ".", "..")
 	}
 
-	// 3. Try parent directory
-	if err != nil || len(keyFiles) == 0 {
-		keyFiles, err = filepath.Glob(filepath.Join(filepath.Dir(projectRoot), keyPattern))
+	seen := make(map[string]bool)
+	searchDirs := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		abs := raw
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(projectRoot, raw)
+		}
+		abs = filepath.Clean(abs)
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		searchDirs = append(searchDirs, abs)
+	}
+	lookup.SearchDirs = searchDirs
+
+	var matched string
+	for _, dir := range searchDirs {
+		keyFiles, err := filepath.Glob(filepath.Join(dir, keyPattern))
+		if err != nil {
+			return nil, lookup, fmt.Errorf("invalid APNs key pattern %q: %w", keyPattern, err)
+		}
+		if len(keyFiles) == 0 {
+			continue
+		}
+		sort.Strings(keyFiles)
+		matched = keyFiles[0]
+		break
 	}
 
-	if err == nil && len(keyFiles) > 0 {
-		keyFile := keyFiles[0]
-		
+	if matched != "" {
+		lookup.MatchedFile = matched
 		// Extract Key ID from filename (AuthKey_XXXXXXXXXX.p8)
-		baseName := filepath.Base(keyFile)
+		baseName := filepath.Base(matched)
 		if strings.HasPrefix(baseName, "AuthKey_") {
 			keyID := strings.TrimSuffix(strings.TrimPrefix(baseName, "AuthKey_"), ".p8")
 			secrets.KeyID = keyID
 		}
 
 		// Read the private key
-		keyData, err := os.ReadFile(keyFile)
+		keyData, err := os.ReadFile(matched)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read APNs key file: %w", err)
+			return nil, lookup, fmt.Errorf("failed to read APNs key file %q: %w", matched, err)
 		}
 		secrets.PrivateKey = string(keyData)
 	}
 
 	// Override from environment variables
 	if keyID := os.Getenv("APNS_KEY_ID"); keyID != "" {
+		lookup.UsedEnvKeyID = true
 		secrets.KeyID = keyID
 	}
 	if teamID := os.Getenv("APNS_TEAM_ID"); teamID != "" {
@@ -280,18 +331,19 @@ func LoadAPNSSecretsFromConfigWithSecretsDir(teamID, bundleID, keyPattern, envir
 		secrets.Environment = env
 	}
 	if pk := os.Getenv("APNS_PRIVATE_KEY"); pk != "" {
+		lookup.UsedEnvKey = true
 		secrets.PrivateKey = pk
 	}
 
 	// Validate
 	if secrets.KeyID == "" {
-		return nil, fmt.Errorf("APNS_KEY_ID not found")
+		return nil, lookup, fmt.Errorf("APNS_KEY_ID not found (searched: %s)", strings.Join(searchDirs, ", "))
 	}
 	if secrets.PrivateKey == "" {
-		return nil, fmt.Errorf("APNs private key not found")
+		return nil, lookup, fmt.Errorf("APNs private key not found (searched: %s)", strings.Join(searchDirs, ", "))
 	}
 
-	return secrets, nil
+	return secrets, lookup, nil
 }
 
 // SetDebugSwitch sets the ENABLE_DEBUG_SWITCH secret (only for non-production).
@@ -302,4 +354,3 @@ func (c *Client) SetDebugSwitch(projectRef string, enabled bool) error {
 	}
 	return c.SetSecret(projectRef, "ENABLE_DEBUG_SWITCH", value)
 }
-

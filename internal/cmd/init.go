@@ -20,20 +20,24 @@ var initCmd = &cobra.Command{
 	Long: `Initialize drift configuration in the current project.
 
 This command creates a .drift.yaml configuration file with 
-detected settings and sensible defaults.`,
+detected settings and sensible defaults.
+
+Use --fallback-branch to seed supabase.fallback_branch in .drift.local.yaml.`,
 	RunE: runInit,
 }
 
 var (
-	initForceFlag          bool
-	initSupabaseProject    string
-	initSkipSupabaseLink   bool
+	initForceFlag        bool
+	initSupabaseProject  string
+	initSkipSupabaseLink bool
+	initFallbackBranch   string
 )
 
 func init() {
 	initCmd.Flags().BoolVarP(&initForceFlag, "force", "f", false, "Overwrite existing .drift.yaml")
 	initCmd.Flags().StringVarP(&initSupabaseProject, "supabase-project", "s", "", "Supabase project name to link")
 	initCmd.Flags().BoolVar(&initSkipSupabaseLink, "skip-link", false, "Skip Supabase project linking")
+	initCmd.Flags().StringVar(&initFallbackBranch, "fallback-branch", "", "Set default Supabase fallback branch in .drift.local.yaml")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -126,6 +130,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		ui.Warning(fmt.Sprintf("Could not create %s: %v", localConfigPath, err))
 	} else {
 		ui.Success(fmt.Sprintf("Created %s", localConfigPath))
+		if initFallbackBranch != "" {
+			if isProtectedBranchName(initFallbackBranch) {
+				ui.Warning(fmt.Sprintf("Refusing to set production-like fallback branch '%s' in %s", initFallbackBranch, localConfigPath))
+			} else if err := config.UpdateLocalSupabaseOverrides(localConfigPath, "", initFallbackBranch); err != nil {
+				ui.Warning(fmt.Sprintf("Could not set fallback branch in %s: %v", localConfigPath, err))
+			} else {
+				ui.Success(fmt.Sprintf("Configured local fallback branch: %s", initFallbackBranch))
+			}
+		}
 	}
 
 	// Add .drift.local.yaml to .gitignore
@@ -405,6 +418,12 @@ func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseNa
   protected_branches:
     - main
     - master
+  secrets_to_push:
+    - APNS_KEY_ID
+    - APNS_TEAM_ID
+    - APNS_BUNDLE_ID
+    - APNS_PRIVATE_KEY
+    - APNS_ENVIRONMENT
 
 `, supabaseRef, supabaseName, functionsDir, migrationsDir)
 	} else {
@@ -416,6 +435,12 @@ func generateConfig(name, projectType, teamID, bundleID, supabaseRef, supabaseNa
   protected_branches:
     - main
     - master
+  secrets_to_push:
+    - APNS_KEY_ID
+    - APNS_TEAM_ID
+    - APNS_BUNDLE_ID
+    - APNS_PRIVATE_KEY
+    - APNS_ENVIRONMENT
 
 `, functionsDir, migrationsDir)
 	}
@@ -454,6 +479,10 @@ project:
   bundle_id: "%s"
   push_key_pattern: "AuthKey_*.p8"
   push_environment: development
+  key_search_paths:
+    - secrets
+    - .
+    - ..
 
 `, teamID, bundleID)
 		} else {
@@ -462,6 +491,10 @@ project:
 #   bundle_id: "com.yourcompany.yourapp"
 #   push_key_pattern: "AuthKey_*.p8"
 #   push_environment: development
+#   key_search_paths:
+#     - secrets
+#     - .
+#     - ..
 
 `
 		}
@@ -516,4 +549,3 @@ worktree:
 
 	return config
 }
-

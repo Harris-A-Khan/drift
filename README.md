@@ -97,6 +97,7 @@ drift env diff <b1> <b2>    # Compare environments between branches
 ```
 
 For iOS/macOS projects, generates `Config.xcconfig`. For web projects, generates `.env.local`.
+Use global `--fallback-branch <name>` when a git branch has no matching Supabase branch.
 
 ### Configuration (`drift config`)
 
@@ -104,9 +105,9 @@ View and modify drift configuration.
 
 ```bash
 drift config show           # Show current configuration
-drift config set-branch     # Interactive: set Supabase branch override
-drift config set-branch X   # Force use of Supabase branch X
-drift config clear-branch   # Clear the override, use auto-detection
+drift config set-branch     # Interactive: set local Supabase branch override
+drift config set-branch X   # Force local override branch (non-production)
+drift config clear-branch   # Clear local override, use auto-detection
 ```
 
 ### Worktree Management (`drift worktree` / `drift wt`)
@@ -185,6 +186,8 @@ Deploy Edge Functions and set environment secrets.
 drift deploy all           # Deploy functions + set secrets
 drift deploy functions     # Deploy edge functions only
 drift deploy secrets       # Set environment secrets
+drift deploy functions --fallback-branch development
+drift deploy secrets --key-search-dir ../shared-keys
 drift deploy status        # Show deployment status
 drift deploy list-secrets  # List configured secrets
 ```
@@ -253,6 +256,12 @@ Create `.drift.local.yaml` for developer-specific settings (automatically gitign
 ```yaml
 supabase:
   override_branch: "feat-my-feature"
+  fallback_branch: "development"
+
+environments:
+  development:
+    secrets:
+      API_BASE_URL: "https://dev-api.example.com"
 
 device:
   default_device: "My iPhone"
@@ -277,13 +286,22 @@ supabase:
   protected_branches:
     - main
     - master
-  override_branch: v2/migration  # Optional: force specific Supabase branch
+  secrets_to_push:
+    - APNS_KEY_ID
+    - APNS_TEAM_ID
+    - APNS_BUNDLE_ID
+    - APNS_PRIVATE_KEY
+    - APNS_ENVIRONMENT
 
-apns:  # iOS/macOS only
+apple:  # iOS/macOS only
   team_id: "XXXXXXXXXX"
   bundle_id: "com.example.myapp"
-  key_pattern: "AuthKey_*.p8"
-  environment: development
+  push_key_pattern: "AuthKey_*.p8"
+  push_environment: development
+  key_search_paths:
+    - secrets
+    - .
+    - ..
 
 xcode:  # iOS/macOS only
   xcconfig_path: Config.xcconfig
@@ -309,12 +327,8 @@ worktree:
 # Per-environment configuration
 environments:
   production:
-    secrets:
-      APNS_KEY_ID: "KEY_PROD_123"
     push_key: "AuthKey_PROD.p8"
   development:
-    secrets:
-      APNS_KEY_ID: "KEY_DEV_456"
     push_key: "AuthKey_DEV.p8"
 
 # Function deployment restrictions
@@ -323,6 +337,9 @@ functions:
     - name: "dangerous-function"
       environments: ["production"]
 ```
+
+Secret values should generally live in `.drift.local.yaml` (gitignored), while
+`supabase.secrets_to_push` in `.drift.yaml` controls which keys Drift will set.
 
 ## Environment Variables
 
@@ -479,4 +496,3 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-

@@ -115,16 +115,16 @@ $ drift branch status
 
 ## Fallback Behavior
 
-If no Supabase branch exists for your git branch, Drift falls back to:
+If no Supabase branch exists for your git branch, Drift resolves fallback in this order:
 
-1. Look for a branch with a similar name
-2. Use the development branch
-3. Use the production branch (last resort)
+1. `--fallback-branch` CLI flag
+2. `supabase.fallback_branch` in `.drift.local.yaml`
+3. Interactive non-production branch selection
 
 You'll see a warning when fallback is used:
 
 ```
-⚠ No Supabase branch for 'feature/experiment', using fallback to development
+⚠ Using fallback target branch: development
 ```
 
 ## See Also

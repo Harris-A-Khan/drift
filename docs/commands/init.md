@@ -21,6 +21,7 @@ It also prompts you to select and link a Supabase project, storing the project r
 | `--force`, `-f` | Overwrite existing configuration |
 | `--supabase-project`, `-s` | Supabase project name to link |
 | `--skip-link` | Skip Supabase project linking |
+| `--fallback-branch` | Seed `supabase.fallback_branch` in `.drift.local.yaml` |
 
 ## What It Does
 
@@ -28,7 +29,8 @@ It also prompts you to select and link a Supabase project, storing the project r
 2. Detects project name from directory or `.xcodeproj`
 3. Lists available Supabase projects and prompts for selection
 4. Links the selected Supabase project
-5. Creates `.drift.yaml` with detected configuration and project reference
+5. Creates `.drift.yaml` and `.drift.local.yaml`
+6. Adds `.drift.local.yaml` to `.gitignore`
 
 ## Example
 
@@ -64,6 +66,9 @@ drift init --supabase-project pause
 
 # Skip linking (configure later)
 drift init --skip-link
+
+# Set local fallback branch during init
+drift init --fallback-branch development
 ```
 
 ## Generated Configuration

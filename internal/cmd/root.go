@@ -13,11 +13,12 @@ import (
 )
 
 var (
-	version   = "dev"
-	cfgFile   string
-	verbose   bool
-	noColor   bool
-	yesFlag   bool
+	version            = "dev"
+	cfgFile            string
+	verbose            bool
+	noColor            bool
+	yesFlag            bool
+	fallbackBranchFlag string
 )
 
 // SetVersion sets the version string (called from main).
@@ -60,6 +61,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().BoolVarP(&yesFlag, "yes", "y", false, "skip confirmation prompts")
+	rootCmd.PersistentFlags().StringVar(&fallbackBranchFlag, "fallback-branch", "", "Supabase branch to use when no exact branch match exists (non-production only)")
 
 	// Version flag
 	rootCmd.Version = version
@@ -95,6 +97,11 @@ func IsYes() bool {
 	return yesFlag
 }
 
+// GetFallbackBranch returns the fallback branch flag value.
+func GetFallbackBranch() string {
+	return fallbackBranchFlag
+}
+
 // GetConfigFile returns the config file path if specified.
 func GetConfigFile() string {
 	return cfgFile
@@ -125,5 +132,3 @@ func RequireInit() bool {
 	}
 	return true
 }
-
-

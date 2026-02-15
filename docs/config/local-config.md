@@ -26,11 +26,10 @@ project/
 
 ### During Init
 
-When running `drift init`, you can choose to create a split configuration:
+When running `drift init`, Drift creates `.drift.local.yaml` automatically:
 
 ```bash
 drift init
-# Select "Split config" when prompted
 ```
 
 This creates both files and automatically adds `.drift.local.yaml` to `.gitignore`.
@@ -44,6 +43,17 @@ Create the file manually:
 
 supabase:
   override_branch: "feat-my-feature"
+  fallback_branch: "development"
+
+environments:
+  development:
+    secrets:
+      API_BASE_URL: "https://dev-api.example.com"
+      ENABLE_DEBUG_SWITCH: "true"
+
+apple:
+  key_search_paths:
+    - "../shared-keys"
 
 device:
   default_device: "My iPhone"
@@ -61,16 +71,49 @@ preferences:
 ```yaml
 supabase:
   override_branch: "feat-my-feature"
+  fallback_branch: "development"
 ```
 
 | Field | Description |
 |-------|-------------|
 | `override_branch` | Force use of a specific Supabase branch regardless of git branch |
+| `fallback_branch` | Default non-production fallback branch when no match exists |
 
 The `override_branch` is useful when:
 - Iterating on a feature branch but using an existing Supabase branch
 - Testing against a specific environment
 - Your git branch doesn't have a matching Supabase branch
+
+Use `fallback_branch` to avoid repeatedly selecting a branch when no match exists.
+
+### environments (local values)
+
+Store branch/environment-specific secret values locally:
+
+```yaml
+environments:
+  development:
+    secrets:
+      API_BASE_URL: "https://dev-api.example.com"
+  production:
+    secrets:
+      API_BASE_URL: "https://api.example.com"
+```
+
+These values override `.drift.yaml` values and are ideal for sensitive secrets.
+
+### apple
+
+```yaml
+apple:
+  key_search_paths:
+    - "secrets"
+    - "../shared-keys"
+```
+
+| Field | Description |
+|-------|-------------|
+| `key_search_paths` | Local override for APNs key search directories |
 
 ### device
 
@@ -120,6 +163,7 @@ Working on a feature that needs to use a specific Supabase branch:
 ```yaml
 supabase:
   override_branch: "feat-payments-v2"
+  fallback_branch: "development"
 ```
 
 ### Verbose Output
@@ -158,6 +202,19 @@ preferences:
 # Supabase branch overrides
 supabase:
   override_branch: "branch-name"  # Force specific Supabase branch
+  fallback_branch: "development"  # Fallback when no match exists
+
+# Local secret values (preferred for sensitive values)
+environments:
+  development:
+    secrets:
+      API_BASE_URL: "https://dev-api.example.com"
+
+# Local APNs key lookup overrides
+apple:
+  key_search_paths:
+    - "secrets"
+    - "../shared-keys"
 
 # Device preferences
 device:

@@ -13,6 +13,8 @@ func DefaultConfig() *Config {
 			FunctionsDir:      "supabase/functions",
 			MigrationsDir:     "supabase/migrations",
 			ProtectedBranches: []string{"main", "master"},
+			FallbackBranch:    "",
+			SecretsToPush:     []string{},
 			Functions:         FunctionsConfig{Restricted: []FunctionRestriction{}},
 		},
 		Environments: map[string]EnvironmentConfig{},
@@ -22,6 +24,7 @@ func DefaultConfig() *Config {
 			PushKeyPattern:  "AuthKey_*.p8",
 			PushEnvironment: "development",
 			SecretsDir:      "secrets",
+			KeySearchPaths:  []string{"secrets", ".", ".."},
 		},
 		Xcode: XcodeConfig{
 			XcconfigOutput: "Config.xcconfig",
@@ -93,6 +96,9 @@ func MergeWithDefaults(cfg *Config) *Config {
 	if cfg.Apple.SecretsDir == "" {
 		cfg.Apple.SecretsDir = defaults.Apple.SecretsDir
 	}
+	if len(cfg.Apple.KeySearchPaths) == 0 {
+		cfg.Apple.KeySearchPaths = defaults.Apple.KeySearchPaths
+	}
 
 	// Xcode defaults
 	if cfg.Xcode.XcconfigOutput == "" {
@@ -153,4 +159,3 @@ func MergeWithDefaults(cfg *Config) *Config {
 
 	return cfg
 }
-

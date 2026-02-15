@@ -30,7 +30,12 @@ The functions command provides tools for working with Edge Functions:
   - Serve functions locally for development
 
 Most commands automatically detect your target environment from your
-current git branch, or you can specify a branch with --branch.`,
+current git branch, or you can specify a branch with --branch.
+
+If no matching Supabase branch exists, Drift resolves fallback in this order:
+  1) --fallback-branch flag
+  2) supabase.fallback_branch from .drift.local.yaml
+  3) interactive non-production branch selection.`,
 	Example: `  drift functions list           # Compare local vs deployed functions
   drift functions logs my-func    # View logs for a function
   drift functions diff my-func    # Compare local vs deployed code
@@ -189,21 +194,12 @@ func getFunctionsTarget() (*supabase.BranchInfo, error) {
 	cfg := config.LoadOrDefault()
 	client := supabase.NewClient()
 
-	targetBranch := functionsBranchFlag
-	if targetBranch == "" {
-		var err error
-		targetBranch, err = git.CurrentBranch()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get current branch: %w", err)
-		}
+	currentBranch, err := git.CurrentBranch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current branch: %w", err)
 	}
 
-	overrideBranch := ""
-	if functionsBranchFlag == "" && cfg.Supabase.OverrideBranch != "" {
-		overrideBranch = cfg.Supabase.OverrideBranch
-	}
-
-	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
+	info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, currentBranch, functionsBranchFlag)
 	if err != nil {
 		return nil, err
 	}
@@ -234,6 +230,9 @@ func runFunctionsList(cmd *cobra.Command, args []string) error {
 	if info.IsOverride {
 		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
+	if info.IsFallback {
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
+	}
 	ui.NewLine()
 
 	// Get local functions
@@ -256,6 +255,12 @@ func runFunctionsList(cmd *cobra.Command, args []string) error {
 	client := supabase.NewClient()
 	deployedFunctions, err := client.ListDeployedFunctions(info.ProjectRef)
 	sp.Stop()
+	if info.IsOverride && IsVerbose() {
+		ui.Infof("Override target: %s (from %s)", info.SupabaseBranch.Name, info.OverrideFrom)
+	}
+	if info.IsFallback {
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
+	}
 
 	deployedFuncMap := make(map[string]supabase.DeployedFunction)
 	if err != nil {
@@ -361,6 +366,12 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	sp.Stop()
+	if info.IsOverride && IsVerbose() {
+		ui.Infof("Override target: %s (from %s)", info.SupabaseBranch.Name, info.OverrideFrom)
+	}
+	if info.IsFallback {
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
+	}
 
 	var functionName string
 
@@ -409,6 +420,12 @@ func runFunctionsLogs(cmd *cobra.Command, args []string) error {
 	client := supabase.NewClient()
 	logs, err := client.GetFunctionLogs(functionName, info.ProjectRef)
 	sp.Stop()
+	if info.IsOverride && IsVerbose() {
+		ui.Infof("Override target: %s (from %s)", info.SupabaseBranch.Name, info.OverrideFrom)
+	}
+	if info.IsFallback {
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
+	}
 
 	if err != nil {
 		return fmt.Errorf("failed to get logs: %w", err)

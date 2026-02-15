@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -10,7 +9,6 @@ import (
 	"github.com/undrift/drift/internal/git"
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
-	"gopkg.in/yaml.v3"
 )
 
 var configCmd = &cobra.Command{
@@ -28,11 +26,14 @@ var configShowCmd = &cobra.Command{
 
 var configSetBranchCmd = &cobra.Command{
 	Use:   "set-branch [supabase-branch]",
-	Short: "Set the Supabase branch override",
+	Short: "Set the local Supabase branch override",
 	Long: `Set an override branch to use instead of the git branch name.
 
 When set, all drift commands will use this Supabase branch for credentials
 instead of trying to match by git branch name.
+
+This is written to .drift.local.yaml (developer/branch-specific config).
+Production branch overrides are rejected.
 
 If no branch is specified, shows available branches for selection.`,
 	Example: `  drift config set-branch           # Interactive selection
@@ -42,9 +43,9 @@ If no branch is specified, shows available branches for selection.`,
 }
 
 var configClearBranchCmd = &cobra.Command{
-	Use:   "clear-branch",
-	Short: "Clear the Supabase branch override",
-	Long:  `Remove the override branch, returning to automatic branch detection.`,
+	Use:     "clear-branch",
+	Short:   "Clear the local Supabase branch override",
+	Long:    `Remove supabase.override_branch from .drift.local.yaml, returning to automatic branch detection.`,
 	Example: `  drift config clear-branch  # Return to automatic detection`,
 	RunE:    runConfigClearBranch,
 }
@@ -57,7 +58,7 @@ func init() {
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithLocal()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -79,6 +80,11 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	} else {
 		ui.KeyValue("Override Branch", "(none - using git branch)")
 	}
+	if cfg.Supabase.FallbackBranch != "" {
+		ui.KeyValue("Fallback Branch", ui.Cyan(cfg.Supabase.FallbackBranch))
+	} else {
+		ui.KeyValue("Fallback Branch", "(none - interactive/flag required on no match)")
+	}
 
 	// Show current resolution
 	gitBranch, err := git.CurrentBranch()
@@ -88,7 +94,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		ui.KeyValue("Git Branch", gitBranch)
 
 		client := supabase.NewClient()
-		info, err := client.GetBranchInfoWithOverride(gitBranch, cfg.Supabase.OverrideBranch)
+		info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, gitBranch, "")
 		if err == nil {
 			ui.KeyValue("Supabase Branch", info.SupabaseBranch.Name)
 			ui.KeyValue("Environment", string(info.Environment))
@@ -96,7 +102,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 				ui.Infof("(using override)")
 			}
 			if info.IsFallback {
-				ui.Infof("(fallback to development)")
+				ui.Infof("(using fallback target: %s)", info.SupabaseBranch.GitBranch)
 			}
 		}
 	}
@@ -184,15 +190,23 @@ func runConfigSetBranch(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("Supabase branch '%s' not found", targetBranch)
 	}
+	if isProductionSupabaseBranch(branch) {
+		return fmt.Errorf("refusing to set production branch '%s' as override target", targetBranch)
+	}
 
-	// Update config file
+	// Update local config file (branch-specific override)
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-
-	if err := updateConfigOverrideBranch(cfg.ConfigPath(), targetBranch); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
+	localPath := filepath.Join(cfg.ProjectRoot(), config.LocalConfigFilename)
+	if !config.LocalConfigExists() {
+		if err := config.WriteLocalConfig(localPath); err != nil {
+			return fmt.Errorf("failed to create %s: %w", config.LocalConfigFilename, err)
+		}
+	}
+	if err := config.UpdateLocalSupabaseOverrides(localPath, targetBranch, ""); err != nil {
+		return fmt.Errorf("failed to update local config: %w", err)
 	}
 
 	env := "feature"
@@ -202,8 +216,8 @@ func runConfigSetBranch(cmd *cobra.Command, args []string) error {
 		env = "development"
 	}
 
-	ui.Success(fmt.Sprintf("Set override branch to '%s' (%s)", targetBranch, env))
-	ui.Infof("All drift commands will now use this Supabase branch")
+	ui.Success(fmt.Sprintf("Set local override branch to '%s' (%s)", targetBranch, env))
+	ui.Infof("Drift will now use this Supabase branch unless --branch is specified")
 
 	return nil
 }
@@ -213,7 +227,7 @@ func runConfigClearBranch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithLocal()
 	if err != nil {
 		return err
 	}
@@ -223,55 +237,13 @@ func runConfigClearBranch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := updateConfigOverrideBranch(cfg.ConfigPath(), ""); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
+	localPath := filepath.Join(cfg.ProjectRoot(), config.LocalConfigFilename)
+	if err := config.ClearLocalSupabaseOverride(localPath); err != nil {
+		return fmt.Errorf("failed to update local config: %w", err)
 	}
 
-	ui.Success("Cleared override branch")
-	ui.Infof("Drift will now use automatic branch detection based on git branch")
+	ui.Success("Cleared local override branch")
+	ui.Infof("Drift will now use automatic branch detection (plus fallback policy)")
 
 	return nil
-}
-
-// updateConfigOverrideBranch updates the override_branch in the config file.
-func updateConfigOverrideBranch(configPath, branch string) error {
-	// Read existing config
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	// Parse as generic map to preserve structure
-	var cfg map[string]interface{}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return err
-	}
-
-	// Get or create supabase section
-	supabaseSection, ok := cfg["supabase"].(map[string]interface{})
-	if !ok {
-		supabaseSection = make(map[string]interface{})
-		cfg["supabase"] = supabaseSection
-	}
-
-	// Update or remove override_branch
-	if branch != "" {
-		supabaseSection["override_branch"] = branch
-	} else {
-		delete(supabaseSection, "override_branch")
-	}
-
-	// Write back
-	newData, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-
-	// Ensure directory exists
-	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(configPath, newData, 0644)
 }

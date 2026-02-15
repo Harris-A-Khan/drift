@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
@@ -17,10 +20,14 @@ var deployCmd = &cobra.Command{
 
 The deploy command determines the target environment from your current
 git branch and deploys to the matching Supabase branch.
+If no match exists, Drift uses fallback resolution in this order:
+  1) --fallback-branch flag
+  2) supabase.fallback_branch from .drift.local.yaml
+  3) interactive non-production branch selection
 
 Commands:
   functions    - Deploy all Edge Functions
-  secrets      - Set environment secrets (APNs, debug switch, etc.)
+  secrets      - Set configured environment secrets
   all          - Deploy functions and set secrets
   status       - Show deployment target and local functions
   list-secrets - List configured secrets on environment`,
@@ -42,6 +49,7 @@ and progress is shown during deployment.
 Use --no-verify-jwt to deploy functions that don't require authentication.`,
 	Example: `  drift deploy functions             # Deploy to current branch's environment
   drift deploy functions -b dev      # Deploy to dev environment
+  drift deploy functions --fallback-branch development
   drift deploy functions --no-verify-jwt  # Skip JWT verification`,
 	RunE: runDeployFunctions,
 }
@@ -53,12 +61,14 @@ var deploySecretsCmd = &cobra.Command{
 
 This configures secrets that are available to Edge Functions at runtime:
   - APNs credentials (for push notifications)
-  - Debug switch (enabled for non-production)
-  - Other environment-specific secrets
+  - Environment-specific secrets from merged config
 
-Production environments have the debug switch disabled automatically.`,
+If supabase.secrets_to_push is configured in .drift.yaml, only those
+keys are pushed.
+Values are typically defined in .drift.local.yaml under environments.<env>.secrets.`,
 	Example: `  drift deploy secrets           # Set secrets for current environment
-  drift deploy secrets -b prod   # Set secrets for production`,
+  drift deploy secrets -b feature/x   # Set secrets for a specific branch
+  drift deploy secrets --key-search-dir ../shared-keys`,
 	RunE: runDeploySecrets,
 }
 
@@ -74,7 +84,7 @@ This is equivalent to running:
 Confirmation is required for production deployments unless --yes is used.`,
 	Example: `  drift deploy all           # Full deployment
   drift deploy all -y        # Skip confirmation
-  drift deploy all -b prod   # Deploy to production`,
+  drift deploy all -b feature/my-branch   # Deploy to specific non-production branch`,
 	RunE: runDeployAll,
 }
 
@@ -106,8 +116,9 @@ Use this to verify secrets are configured before deploying functions.`,
 }
 
 var (
-	deployBranchFlag     string
-	deployNoVerifyJWT    bool
+	deployBranchFlag    string
+	deployNoVerifyJWT   bool
+	deployKeySearchDirs []string
 )
 
 func init() {
@@ -116,6 +127,8 @@ func init() {
 	deploySecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deployAllCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
 	deployListSecretsCmd.Flags().StringVarP(&deployBranchFlag, "branch", "b", "", "Target Supabase branch")
+	deploySecretsCmd.Flags().StringSliceVar(&deployKeySearchDirs, "key-search-dir", nil, "Directory to search for APNs key files (can be repeated; overrides configured search paths)")
+	deployAllCmd.Flags().StringSliceVar(&deployKeySearchDirs, "key-search-dir", nil, "Directory to search for APNs key files (can be repeated; overrides configured search paths)")
 
 	// Add --no-verify-jwt flag to functions deployment
 	deployFunctionsCmd.Flags().BoolVar(&deployNoVerifyJWT, "no-verify-jwt", false, "Deploy functions without JWT verification")
@@ -133,22 +146,12 @@ func getDeployTarget() (*supabase.BranchInfo, error) {
 	cfg := config.LoadOrDefault()
 	client := supabase.NewClient()
 
-	targetBranch := deployBranchFlag
-	if targetBranch == "" {
-		var err error
-		targetBranch, err = git.CurrentBranch()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get current branch: %w", err)
-		}
+	currentBranch, err := git.CurrentBranch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current branch: %w", err)
 	}
 
-	// Apply override from config (if no flag override)
-	overrideBranch := ""
-	if deployBranchFlag == "" && cfg.Supabase.OverrideBranch != "" {
-		overrideBranch = cfg.Supabase.OverrideBranch
-	}
-
-	info, err := client.GetBranchInfoWithOverride(targetBranch, overrideBranch)
+	info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, currentBranch, deployBranchFlag)
 	if err != nil {
 		return nil, err
 	}
@@ -181,13 +184,12 @@ func runDeployFunctions(cmd *cobra.Command, args []string) error {
 	if info.IsOverride {
 		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
-
 	if info.IsFallback {
-		ui.Warning("Using fallback environment")
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
 	}
 
-	// Confirm for production
-	confirmed, err := ConfirmProductionOperation(info.Environment, "deploy Edge Functions")
+	// Confirm for protected/development environments
+	confirmed, err := ConfirmDeploymentOperation(info, cfg, "deploy Edge Functions")
 	if err != nil || !confirmed {
 		return nil
 	}
@@ -289,9 +291,12 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 	if info.IsOverride {
 		ui.Infof("Override: using %s instead of %s", ui.Cyan(info.SupabaseBranch.Name), ui.Cyan(info.OverrideFrom))
 	}
+	if info.IsFallback {
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
+	}
 
-	// Confirm for production
-	confirmed, err := ConfirmProductionOperation(info.Environment, "set secrets")
+	// Confirm for protected/development environments
+	confirmed, err := ConfirmDeploymentOperation(info, cfg, "set secrets")
 	if err != nil || !confirmed {
 		return nil
 	}
@@ -318,66 +323,81 @@ func runDeploySecrets(cmd *cobra.Command, args []string) error {
 		ui.Infof("Using per-environment push key: %s", pushKeyPattern)
 	}
 
-	apnsSecrets, err := supabase.LoadAPNSSecretsFromConfigWithSecretsDir(
+	searchPaths := cfg.Apple.KeySearchPaths
+	if len(deployKeySearchDirs) > 0 {
+		searchPaths = deployKeySearchDirs
+	}
+	if len(searchPaths) == 0 {
+		searchPaths = []string{cfg.Apple.SecretsDir, ".", ".."}
+	}
+
+	ui.SubHeader("APNs Key Search")
+	for _, path := range resolveSearchDirs(cfg.ProjectRoot(), searchPaths) {
+		ui.List(path)
+	}
+	ui.NewLine()
+
+	apnsSecrets, apnsLookup, err := supabase.LoadAPNSSecretsFromConfigWithSearchPaths(
 		cfg.Apple.TeamID,
 		cfg.Apple.BundleID,
 		pushKeyPattern,
 		apnsEnv,
 		cfg.ProjectRoot(),
 		cfg.Apple.SecretsDir,
+		searchPaths,
 	)
+
+	availableSecrets := make(map[string]string)
+
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not load APNs secrets: %v", err))
-		ui.Info("Skipping APNs secret setup")
+		ui.Info("Skipping APNs-derived secrets")
 	} else {
-		sp = ui.NewSpinner("Setting APNs secrets")
-		sp.Start()
-
-		if err := client.SetAPNSSecrets(info.ProjectRef, *apnsSecrets); err != nil {
-			sp.Fail("Failed to set APNs secrets")
-			return err
+		if apnsLookup != nil && apnsLookup.MatchedFile != "" {
+			ui.KeyValue("Matched Key File", apnsLookup.MatchedFile)
 		}
-
-		sp.Success("Set APNs secrets")
+		availableSecrets["APNS_KEY_ID"] = apnsSecrets.KeyID
+		availableSecrets["APNS_TEAM_ID"] = apnsSecrets.TeamID
+		availableSecrets["APNS_BUNDLE_ID"] = apnsSecrets.BundleID
+		availableSecrets["APNS_PRIVATE_KEY"] = apnsSecrets.PrivateKey
+		availableSecrets["APNS_ENVIRONMENT"] = apnsSecrets.Environment
 	}
 
-	// Set per-environment secrets if configured
+	// Add per-environment secrets
 	if envConfig != nil && len(envConfig.Secrets) > 0 {
-		sp = ui.NewSpinner(fmt.Sprintf("Setting %d per-environment secrets", len(envConfig.Secrets)))
-		sp.Start()
-
 		for key, value := range envConfig.Secrets {
-			if err := client.SetSecret(info.ProjectRef, key, value); err != nil {
-				sp.Fail(fmt.Sprintf("Failed to set secret %s", key))
-				return err
-			}
+			availableSecrets[key] = value
 		}
-
-		sp.Success(fmt.Sprintf("Set %d per-environment secrets", len(envConfig.Secrets)))
 	}
 
-	// Set debug switch (only for non-production)
-	if info.Environment != supabase.EnvProduction {
-		sp = ui.NewSpinner("Enabling debug switch")
-		sp.Start()
-
-		if err := client.SetDebugSwitch(info.ProjectRef, true); err != nil {
-			sp.Fail("Failed to set debug switch")
-			return err
+	secretsToPush, missingConfigured := selectSecretsToPush(cfg.Supabase.SecretsToPush, availableSecrets)
+	if IsVerbose() {
+		if len(cfg.Supabase.SecretsToPush) > 0 {
+			ui.Infof("Configured supabase.secrets_to_push: %s", stringsJoinSorted(cfg.Supabase.SecretsToPush))
+		} else {
+			ui.Info("No supabase.secrets_to_push configured; pushing all discovered secrets")
 		}
-
-		sp.Success("Enabled debug switch")
-	} else {
-		sp = ui.NewSpinner("Disabling debug switch for production")
-		sp.Start()
-
-		if err := client.SetDebugSwitch(info.ProjectRef, false); err != nil {
-			sp.Fail("Failed to set debug switch")
-			return err
-		}
-
-		sp.Success("Disabled debug switch")
+		ui.Infof("Discovered %d secret candidate(s): %s", len(availableSecrets), stringsJoinSorted(secretMapKeys(availableSecrets)))
 	}
+	if len(missingConfigured) > 0 {
+		ui.Warningf("Configured secrets not available for this run: %s", stringsJoinSorted(missingConfigured))
+	}
+
+	if len(secretsToPush) == 0 {
+		ui.Warning("No secrets selected to push")
+		ui.Info("Update supabase.secrets_to_push or environment-specific secrets in .drift.yaml")
+		return nil
+	}
+
+	ui.Infof("Pushing %d secret(s): %s", len(secretsToPush), stringsJoinSecretNames(secretsToPush))
+	sp = ui.NewSpinner(fmt.Sprintf("Setting %d secret(s)", len(secretsToPush)))
+	sp.Start()
+
+	if err := client.SetSecrets(info.ProjectRef, secretsToPush); err != nil {
+		sp.Fail("Failed to set secrets")
+		return err
+	}
+	sp.Success(fmt.Sprintf("Set %d secret(s)", len(secretsToPush)))
 
 	ui.NewLine()
 	ui.Success("Secrets configured successfully")
@@ -418,10 +438,8 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Apply override from config
-	overrideBranch := cfg.Supabase.OverrideBranch
 	client := supabase.NewClient()
-	info, err := client.GetBranchInfoWithOverride(gitBranch, overrideBranch)
+	info, err := ResolveSupabaseTargetForCurrentBranch(client, cfg, gitBranch, "")
 	if err != nil {
 		ui.Warning(fmt.Sprintf("Could not resolve Supabase branch: %v", err))
 		ui.KeyValue("Git Branch", ui.Cyan(gitBranch))
@@ -442,7 +460,7 @@ func runDeployStatus(cmd *cobra.Command, args []string) error {
 
 	if info.IsFallback {
 		ui.NewLine()
-		ui.Warning("Using fallback: no Supabase branch for this git branch")
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
 	}
 
 	// List functions
@@ -488,7 +506,7 @@ func runDeployListSecrets(cmd *cobra.Command, args []string) error {
 	}
 
 	if info.IsFallback {
-		ui.Warning("Using fallback environment")
+		ui.Warningf("Using fallback target branch: %s", info.SupabaseBranch.GitBranch)
 	}
 
 	ui.NewLine()
@@ -521,3 +539,88 @@ func runDeployListSecrets(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func resolveSearchDirs(projectRoot string, rawPaths []string) []string {
+	seen := make(map[string]bool)
+	var dirs []string
+	for _, p := range rawPaths {
+		if p == "" {
+			continue
+		}
+		resolved := p
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(projectRoot, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		dirs = append(dirs, resolved)
+	}
+	return dirs
+}
+
+func selectSecretsToPush(configured []string, available map[string]string) ([]supabase.Secret, []string) {
+	if len(available) == 0 {
+		return nil, nil
+	}
+
+	seenConfigured := make(map[string]bool)
+	var selected []string
+	var missing []string
+
+	if len(configured) > 0 {
+		for _, key := range configured {
+			if key == "" || seenConfigured[key] {
+				continue
+			}
+			seenConfigured[key] = true
+			if _, ok := available[key]; ok {
+				selected = append(selected, key)
+			} else {
+				missing = append(missing, key)
+			}
+		}
+	} else {
+		for key := range available {
+			selected = append(selected, key)
+		}
+	}
+
+	sort.Strings(selected)
+	sort.Strings(missing)
+
+	secrets := make([]supabase.Secret, 0, len(selected))
+	for _, key := range selected {
+		secrets = append(secrets, supabase.Secret{Name: key, Value: available[key]})
+	}
+
+	return secrets, missing
+}
+
+func stringsJoinSecretNames(secrets []supabase.Secret) string {
+	names := make([]string, len(secrets))
+	for i, s := range secrets {
+		names[i] = s.Name
+	}
+	sort.Strings(names)
+	return stringsJoinSorted(names)
+}
+
+func stringsJoinSorted(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ", ")
+}
+
+func secretMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}

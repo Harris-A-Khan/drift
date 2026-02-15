@@ -13,8 +13,8 @@ drift config <subcommand>
 | Command | Description |
 |---------|-------------|
 | `show` | Show current configuration |
-| `set-branch` | Set the Supabase branch override |
-| `clear-branch` | Clear the Supabase branch override |
+| `set-branch` | Set the local Supabase branch override |
+| `clear-branch` | Clear the local Supabase branch override |
 
 ---
 
@@ -56,7 +56,7 @@ $ drift config show
 
 ## drift config set-branch
 
-Set an override branch to use instead of automatic git branch detection.
+Set a local override branch to use instead of automatic git branch detection.
 
 ```bash
 drift config set-branch [supabase-branch]
@@ -88,8 +88,8 @@ Similar branches to 'v2/migration-refinements':
     development [development]
     main [production]
 
-✓ Set override branch to 'v2/migration' (feature)
-  All drift commands will now use this Supabase branch
+✓ Set local override branch to 'v2/migration' (feature)
+  Drift will now use this Supabase branch unless --branch is specified
 ```
 
 ### Direct Mode
@@ -99,8 +99,8 @@ Specify the branch directly:
 ```bash
 $ drift config set-branch v2/migration
 
-✓ Set override branch to 'v2/migration' (feature)
-  All drift commands will now use this Supabase branch
+✓ Set local override branch to 'v2/migration' (feature)
+  Drift will now use this Supabase branch unless --branch is specified
 ```
 
 ### Fuzzy Matching
@@ -118,7 +118,7 @@ $ drift config set-branch v2/migrat
 
 ## drift config clear-branch
 
-Remove the override branch, returning to automatic branch detection.
+Remove the local override branch, returning to automatic branch detection.
 
 ```bash
 drift config clear-branch
@@ -129,8 +129,8 @@ drift config clear-branch
 ```bash
 $ drift config clear-branch
 
-✓ Cleared override branch
-  Drift will now use automatic branch detection based on git branch
+✓ Cleared local override branch
+  Drift will now use automatic branch detection (plus fallback policy)
 ```
 
 ---
@@ -143,11 +143,11 @@ When no override is set, drift resolves Supabase branches automatically:
 |------------|-----------------|
 | `main` | Production branch (default) |
 | `development` | Development branch (persistent) |
-| Other branches | Match by name, fallback to development |
+| Other branches | Match by name, then use configured fallback policy |
 
 ### Override Behavior
 
-When `override_branch` is set in `.drift.yaml`:
+When `override_branch` is set in `.drift.local.yaml`:
 
 - All drift commands use the override branch
 - Command-line `--branch` flag still takes precedence
@@ -169,21 +169,14 @@ drift config set-branch development
 drift config set-branch v2/migration
 ```
 
-**Testing against production (read-only):**
-```bash
-drift config set-branch main
-drift env show  # View production config
-drift config clear-branch  # Return to normal
-```
+Production branch overrides are intentionally blocked.
 
 ## Configuration File
 
-The override is stored in `.drift.yaml`:
+The override is stored in `.drift.local.yaml`:
 
 ```yaml
 supabase:
-  project_ref: abcdefghij
-  project_name: my-project
   override_branch: v2/migration  # This field
 ```
 

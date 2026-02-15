@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/undrift/drift/internal/config"
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
 )
@@ -23,6 +24,45 @@ const (
 // If --yes flag is set, returns true without prompting (for automation).
 func ConfirmProductionOperation(env supabase.Environment, operation string) (bool, error) {
 	return confirmOperation(env, operation, ProtectionStandard)
+}
+
+// ConfirmDeploymentOperation applies environment-aware confirmations for deployment-style changes:
+// - production/protected branches: strict confirmation
+// - development: standard confirmation
+// - feature branches: no prompt
+func ConfirmDeploymentOperation(info *supabase.BranchInfo, cfg *config.Config, operation string) (bool, error) {
+	if IsYes() {
+		return true, nil
+	}
+	if info == nil {
+		return true, nil
+	}
+
+	protected := info.Environment == supabase.EnvProduction
+	if cfg != nil && info.SupabaseBranch != nil {
+		if cfg.IsProtectedBranch(info.SupabaseBranch.GitBranch) || cfg.IsProtectedBranch(info.SupabaseBranch.Name) || isProtectedBranchName(info.SupabaseBranch.GitBranch) || isProtectedBranchName(info.SupabaseBranch.Name) {
+			protected = true
+		}
+	}
+
+	if protected {
+		return confirmOperation(supabase.EnvProduction, operation, ProtectionStrict)
+	}
+
+	if info.Environment == supabase.EnvDevelopment {
+		ui.NewLine()
+		ui.Warning(fmt.Sprintf("You are about to %s on DEVELOPMENT.", operation))
+		confirmed, err := ui.PromptYesNo("Continue?", false)
+		if err != nil {
+			return false, err
+		}
+		if !confirmed {
+			ui.Info("Cancelled")
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // RequireProductionConfirmation is a stricter version that requires typing "yes"
