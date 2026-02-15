@@ -62,6 +62,12 @@ var (
 	migrateForceFlag  bool
 )
 
+type migrationListRow struct {
+	Local     string
+	Remote    string
+	AppliedAt string
+}
+
 func init() {
 	migratePushCmd.Flags().BoolVar(&migrateDryRunFlag, "dry-run", false, "Show what would be pushed without actually pushing")
 	migratePushCmd.Flags().BoolVarP(&migrateForceFlag, "force", "f", false, "Force push to protected branches")
@@ -152,8 +158,10 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 
 	// Show pending migrations
 	ui.SubHeader(fmt.Sprintf("Pending Migrations (%d)", len(pendingMigrations)))
+	fmt.Printf("  %-14s  %s\n", "VERSION", "FILE")
+	fmt.Printf("  %-14s  %s\n", strings.Repeat("-", 14), strings.Repeat("-", 4))
 	for _, m := range pendingMigrations {
-		ui.List(m)
+		fmt.Printf("  %-14s  %s\n", migrationTimestampFromFilename(m), m)
 	}
 
 	ui.NewLine()
@@ -247,9 +255,7 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 		var failedMigrations []string
 
 		for _, m := range pendingMigrations {
-			name := strings.TrimSuffix(m, ".sql")
-			parts := strings.SplitN(name, "_", 2)
-			timestamp := parts[0]
+			timestamp := migrationTimestampFromFilename(m)
 
 			if newAppliedMigrations[timestamp] {
 				appliedCount++
@@ -382,9 +388,7 @@ func findPendingMigrations(local []string, applied map[string]bool) []string {
 
 	for _, migration := range local {
 		// Extract timestamp from filename (e.g., "20240101000000_create_users.sql" -> "20240101000000")
-		name := strings.TrimSuffix(migration, ".sql")
-		parts := strings.SplitN(name, "_", 2)
-		timestamp := parts[0]
+		timestamp := migrationTimestampFromFilename(migration)
 
 		if !applied[timestamp] {
 			pending = append(pending, migration)
@@ -425,6 +429,12 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	ui.NewLine()
 	ui.SubHeader("Migrations")
 
+	localMigrations, localErr := getLocalMigrations(cfg)
+	if localErr != nil {
+		ui.Warning(fmt.Sprintf("Could not list local migrations: %v", localErr))
+		localMigrations = nil
+	}
+
 	// Get DB URL for the project
 	sp := ui.NewSpinner("Checking migration status")
 	sp.Start()
@@ -449,7 +459,9 @@ func runMigrateStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.Stdout != "" {
-		fmt.Println(result.Stdout)
+		if !renderMigrationListWithFiles(result.Stdout, localMigrations) {
+			fmt.Println(result.Stdout)
+		}
 	} else {
 		ui.Info("No migrations found")
 	}
@@ -543,9 +555,7 @@ func runMigrateHistory(cmd *cobra.Command, args []string) error {
 	appliedCount := 0
 	pendingCount := 0
 	for _, m := range localMigrations {
-		name := strings.TrimSuffix(m, ".sql")
-		parts := strings.SplitN(name, "_", 2)
-		timestamp := parts[0]
+		timestamp := migrationTimestampFromFilename(m)
 		if _, ok := migrationInfo[timestamp]; ok {
 			appliedCount++
 		} else {
@@ -557,25 +567,18 @@ func runMigrateHistory(cmd *cobra.Command, args []string) error {
 	ui.NewLine()
 
 	// Show table header
-	fmt.Printf("  %-6s  %-20s  %-40s\n", "STATUS", "APPLIED AT", "MIGRATION")
-	fmt.Printf("  %-6s  %-20s  %-40s\n", "------", "----------", "---------")
+	fmt.Printf("  %-6s  %-14s  %-20s  %s\n", "STATUS", "VERSION", "APPLIED AT", "FILE")
+	fmt.Printf("  %-6s  %-14s  %-20s  %s\n", "------", "-------", "----------", "----")
 
 	for _, m := range localMigrations {
-		name := strings.TrimSuffix(m, ".sql")
-		parts := strings.SplitN(name, "_", 2)
-		timestamp := parts[0]
-
-		migName := m
-		if len(migName) > 50 {
-			migName = migName[:47] + "..."
-		}
+		timestamp := migrationTimestampFromFilename(m)
 
 		if appliedAt, ok := migrationInfo[timestamp]; ok {
 			// Applied
-			fmt.Printf("  %s  %-20s  %s\n", ui.Green("✓ "), appliedAt, migName)
+			fmt.Printf("  %s  %-14s  %-20s  %s\n", ui.Green("✓ "), timestamp, appliedAt, m)
 		} else {
 			// Pending
-			fmt.Printf("  %s  %-20s  %s\n", ui.Yellow("○ "), "pending", migName)
+			fmt.Printf("  %s  %-14s  %-20s  %s\n", ui.Yellow("○ "), timestamp, "pending", m)
 		}
 	}
 
@@ -611,34 +614,113 @@ func getMigrationDetails(projectRef string) (map[string]string, error) {
 	}
 
 	details := make(map[string]string)
-
-	// Parse output - format is typically:
-	// LOCAL | REMOTE | TIME (UTC)
-	// 20240101000000 | 20240101000000 | 2024-01-01 00:00:00
-	lines := strings.Split(result.Stdout, "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "LOCAL") || strings.HasPrefix(line, "Local") || strings.HasPrefix(line, "-") {
+	for _, row := range parseMigrationListRows(result.Stdout) {
+		if row.Remote == "" || row.Local == "" {
 			continue
 		}
-
-		parts := strings.Split(line, "|")
-		if len(parts) >= 3 {
-			local := strings.TrimSpace(parts[0])
-			remote := strings.TrimSpace(parts[1])
-			appliedAt := strings.TrimSpace(parts[2])
-
-			if remote != "" && remote != " " && local != "" {
-				// Format the timestamp nicely
-				if len(appliedAt) > 16 {
-					appliedAt = appliedAt[:16] // Trim to "2024-01-01 00:00"
-				}
-				details[local] = appliedAt
-			}
+		appliedAt := row.AppliedAt
+		if len(appliedAt) > 16 {
+			appliedAt = appliedAt[:16] // Trim to "2024-01-01 00:00"
 		}
+		details[row.Local] = appliedAt
 	}
 
 	return details, nil
 }
 
+func parseMigrationListRows(output string) []migrationListRow {
+	lines := strings.Split(output, "\n")
+	rows := make([]migrationListRow, 0, len(lines))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		lowerTrimmed := strings.ToLower(trimmed)
+		if strings.HasPrefix(lowerTrimmed, "local") || strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "─") {
+			continue
+		}
+
+		if !strings.Contains(line, "|") {
+			continue
+		}
+
+		parts := strings.Split(line, "|")
+		if len(parts) < 3 {
+			continue
+		}
+
+		row := migrationListRow{
+			Local:     strings.TrimSpace(parts[0]),
+			Remote:    strings.TrimSpace(parts[1]),
+			AppliedAt: strings.TrimSpace(parts[2]),
+		}
+
+		if row.Local == "" && row.Remote == "" {
+			continue
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
+func migrationTimestampFromFilename(filename string) string {
+	name := strings.TrimSuffix(filename, ".sql")
+	parts := strings.SplitN(name, "_", 2)
+	return strings.TrimSpace(parts[0])
+}
+
+func buildMigrationFilenameIndex(localMigrations []string) map[string]string {
+	index := make(map[string]string, len(localMigrations))
+	for _, migration := range localMigrations {
+		timestamp := migrationTimestampFromFilename(migration)
+		if timestamp != "" {
+			index[timestamp] = migration
+		}
+	}
+	return index
+}
+
+func migrationFileForRow(row migrationListRow, filenameByTimestamp map[string]string) string {
+	timestamp := row.Local
+	if timestamp == "" {
+		timestamp = row.Remote
+	}
+	if timestamp == "" {
+		return "-"
+	}
+
+	if filename, ok := filenameByTimestamp[timestamp]; ok {
+		return filename
+	}
+
+	return "-"
+}
+
+func renderMigrationListWithFiles(rawOutput string, localMigrations []string) bool {
+	rows := parseMigrationListRows(rawOutput)
+	if len(rows) == 0 {
+		return false
+	}
+
+	filenameByTimestamp := buildMigrationFilenameIndex(localMigrations)
+
+	fmt.Printf("  %-14s | %-14s | %-19s | %s\n", "Local", "Remote", "Time (UTC)", "File")
+	fmt.Printf("  %-14s-|-%-14s-|-%-19s-|-%s\n", strings.Repeat("-", 14), strings.Repeat("-", 14), strings.Repeat("-", 19), strings.Repeat("-", 4))
+
+	for _, row := range rows {
+		fmt.Printf(
+			"  %-14s | %-14s | %-19s | %s\n",
+			row.Local,
+			row.Remote,
+			row.AppliedAt,
+			migrationFileForRow(row, filenameByTimestamp),
+		)
+	}
+
+	return true
+}
