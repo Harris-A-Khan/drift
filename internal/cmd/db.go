@@ -92,17 +92,19 @@ Optional filters:
 }
 
 var (
-	dbOutputFlag   string
-	dbInputFlag    string
-	dbPasswordFlag string
-	dbSeedSource   string
-	dbSeedTables   string
+	dbOutputFlag     string
+	dbInputFlag      string
+	dbPasswordFlag   string
+	dbPushPoolerMode string
+	dbSeedSource     string
+	dbSeedTables     string
 )
 
 func init() {
 	dbDumpCmd.Flags().StringVarP(&dbOutputFlag, "output", "o", "", "Output file path")
 	dbPushCmd.Flags().StringVarP(&dbInputFlag, "input", "i", "", "Input backup file")
 	dbPushCmd.Flags().StringVar(&dbPasswordFlag, "password", "", "Target database password (or use env var)")
+	dbPushCmd.Flags().StringVar(&dbPushPoolerMode, "pooler-mode", "prompt", "Pooler mode for restore (prompt|transaction|session)")
 	dbSeedCmd.Flags().StringVar(&dbSeedSource, "source", "dev", "Source environment (prod|dev)")
 	dbSeedCmd.Flags().StringVar(&dbSeedTables, "tables", "", "Comma-separated list of public tables to include")
 
@@ -151,6 +153,43 @@ func getProjectRef(env string) string {
 		}
 	}
 	return ""
+}
+
+func selectDbPushPoolerMode() (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(dbPushPoolerMode))
+	switch mode {
+	case "transaction", "session":
+		return mode, nil
+	case "", "prompt":
+		if IsYes() {
+			// Non-interactive mode: prefer previous default behavior.
+			return "transaction", nil
+		}
+
+		options := []string{
+			"transaction (recommended, previous default) - port 6543",
+			"session - port 5432",
+		}
+
+		selected, err := ui.PromptSelect("Select restore pooler mode", options)
+		if err != nil {
+			return "", fmt.Errorf("pooler mode selection cancelled: %w", err)
+		}
+
+		if strings.HasPrefix(strings.ToLower(selected), "session") {
+			return "session", nil
+		}
+		return "transaction", nil
+	default:
+		return "", fmt.Errorf("invalid --pooler-mode value %q (use prompt, transaction, or session)", dbPushPoolerMode)
+	}
+}
+
+func poolerPortForMode(mode string) int {
+	if mode == "session" {
+		return 5432
+	}
+	return 6543
 }
 
 func runDbDump(cmd *cobra.Command, args []string) error {
@@ -569,13 +608,22 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		poolerHost = cfg.Database.PoolerHost
 	}
 
-	// Use transaction mode (port 6543) for psql restore - matches push-db-to-branch.sh
-	poolerPort := 6543
+	poolerMode, err := selectDbPushPoolerMode()
+	if err != nil {
+		return err
+	}
+
+	poolerPort := poolerPortForMode(poolerMode)
 	poolerUser := fmt.Sprintf("postgres.%s", targetProjectRef)
 
 	ui.KeyValue("Source", sourceFile)
 	ui.KeyValue("Target", envColorString(targetEnv))
 	ui.KeyValue("Project Ref", ui.Cyan(targetProjectRef))
+	if poolerMode == "transaction" {
+		ui.KeyValue("Pooler Mode", "transaction (recommended)")
+	} else {
+		ui.KeyValue("Pooler Mode", "session")
+	}
 	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
 	// Confirm - stricter for development (permanent branch) vs feature (preview)
@@ -604,6 +652,22 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 	opts.User = poolerUser
 	opts.Password = password
 	opts.InputFile = sourceFile
+	// Use a single transaction so transaction-pooler mode keeps one backend
+	// for the full restore and session settings apply consistently.
+	opts.SingleTxn = true
+
+	// Resolve auth table copy scope up front so it's visible before restore.
+	authCopyTables, authTableErr := database.ResolveAllowedAuthCopyTables(opts)
+	if authTableErr != nil {
+		ui.Warning(fmt.Sprintf("Could not resolve auth copy tables ahead of restore: %v", authTableErr))
+	} else {
+		opts.AuthCopyTables = authCopyTables
+		if len(authCopyTables) == 0 {
+			ui.KeyValue("Auth Copy Tables", "none")
+		} else {
+			ui.KeyValue("Auth Copy Tables", strings.Join(authCopyTables, ", "))
+		}
+	}
 
 	// Perform restore
 	sp := ui.NewSpinner(fmt.Sprintf("Restoring database from %s", sourceFile))

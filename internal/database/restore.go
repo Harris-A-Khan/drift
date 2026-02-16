@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/undrift/drift/pkg/shell"
@@ -21,6 +22,11 @@ type RestoreOptions struct {
 	NoOwner    bool
 	SingleTxn  bool
 	Jobs       int // Number of parallel jobs
+
+	// AuthCopyTables optionally overrides which auth.* tables are copied from
+	// plain SQL backups during preprocessing. If empty, Drift auto-detects
+	// auth tables with INSERT privilege on the target branch.
+	AuthCopyTables []string
 }
 
 // DefaultRestoreOptions returns default restore options.
@@ -140,10 +146,19 @@ func restoreSQL(opts RestoreOptions) error {
 		return err
 	}
 
+	allowedAuthTables, err := resolveAllowedAuthCopyTables(opts)
+	if err != nil {
+		return fmt.Errorf("failed to resolve auth copy tables: %w", err)
+	}
+
 	// Preprocess the backup file to:
-	// 1. Remove \restrict lines (Supabase security feature that breaks restore)
-	// 2. Add session_replication_role = replica to disable triggers during restore
-	processedFile, err := preprocessBackupFile(opts.InputFile)
+	// 1. Remove Supabase guard metacommands (\restrict/\unrestrict)
+	// 2. Keep only safe data sync statements (COPY + sequence setval) for:
+	//    - public.*
+	//    - auth.* tables with INSERT privileges on target
+	//    - supabase_migrations.schema_migrations
+	// 3. Add session_replication_role = replica to bypass trigger/constraint side effects
+	processedFile, err := preprocessBackupFile(opts.InputFile, allowedAuthTables)
 	if err != nil {
 		return fmt.Errorf("failed to preprocess backup: %w", err)
 	}
@@ -154,6 +169,7 @@ func restoreSQL(opts RestoreOptions) error {
 		"-p", fmt.Sprintf("%d", opts.Port),
 		"-U", opts.User,
 		"-d", opts.Database,
+		"-v", "ON_ERROR_STOP=1",
 		"-f", processedFile,
 	}
 
@@ -166,10 +182,14 @@ func restoreSQL(opts RestoreOptions) error {
 	}
 
 	result, err := shell.RunWithEnv(env, psql, args...)
-	if err != nil {
+	if err != nil || result.ExitCode != 0 {
 		errMsg := result.Stderr
 		if errMsg == "" {
-			errMsg = err.Error()
+			if err != nil {
+				errMsg = err.Error()
+			} else {
+				errMsg = fmt.Sprintf("psql exited with code %d", result.ExitCode)
+			}
 		}
 		return fmt.Errorf("psql restore failed: %s", errMsg)
 	}
@@ -178,9 +198,16 @@ func restoreSQL(opts RestoreOptions) error {
 }
 
 // preprocessBackupFile creates a modified copy of the backup file that:
-// 1. Removes \restrict lines (Supabase security feature)
-// 2. Wraps content with SET session_replication_role = replica to disable triggers
-func preprocessBackupFile(inputFile string) (string, error) {
+// 1. Removes \restrict/\unrestrict lines (Supabase psql guard metacommands)
+// 2. Keeps only safe data sync statements from full backups:
+//   - COPY public.*
+//   - COPY auth.* (limited to insertable tables on target)
+//   - COPY supabase_migrations.schema_migrations
+//   - SELECT pg_catalog.setval(...) for public/supabase_migrations sequences
+//
+// 3. Inserts TRUNCATE ... CASCADE for each copied table before first COPY
+// 4. Wraps content with SET session_replication_role = replica
+func preprocessBackupFile(inputFile string, allowedAuthCopyTables map[string]bool) (string, error) {
 	input, err := os.Open(inputFile)
 	if err != nil {
 		return "", err
@@ -202,16 +229,51 @@ func preprocessBackupFile(inputFile string) (string, error) {
 	// Increase buffer size for long lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024) // 10MB max line
+	inCopyBlock := false
+	keepCopyBlock := false
+	truncatedTables := map[string]bool{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
 
-		// Skip \restrict lines (Supabase security feature that blocks COPY data)
-		if strings.HasPrefix(line, "\\restrict") {
+		// Skip Supabase restore guard metacommands that can block COPY data.
+		if strings.HasPrefix(trimmed, "\\restrict") || strings.HasPrefix(trimmed, "\\unrestrict") {
 			continue
 		}
 
-		tempFile.WriteString(line + "\n")
+		if inCopyBlock {
+			if keepCopyBlock {
+				tempFile.WriteString(line + "\n")
+			}
+			if trimmed == "\\." {
+				inCopyBlock = false
+				keepCopyBlock = false
+			}
+			continue
+		}
+
+		if strings.HasPrefix(upper, "COPY ") {
+			table := copyTargetTable(trimmed)
+			if isAllowedCopyTable(table, allowedAuthCopyTables) {
+				if !truncatedTables[table] {
+					tempFile.WriteString(fmt.Sprintf("TRUNCATE TABLE %s CASCADE;\n", table))
+					truncatedTables[table] = true
+				}
+				tempFile.WriteString(line + "\n")
+				inCopyBlock = true
+				keepCopyBlock = true
+			} else {
+				inCopyBlock = true
+				keepCopyBlock = false
+			}
+			continue
+		}
+
+		if isAllowedSetvalStatement(trimmed, allowedAuthCopyTables) {
+			tempFile.WriteString(line + "\n")
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -226,6 +288,139 @@ func preprocessBackupFile(inputFile string) (string, error) {
 
 	tempFile.Close()
 	return tempFile.Name(), nil
+}
+
+// ResolveAllowedAuthCopyTables returns the auth.* tables that Drift will copy
+// during plain SQL restore preprocessing.
+func ResolveAllowedAuthCopyTables(opts RestoreOptions) ([]string, error) {
+	tables, err := resolveAllowedAuthCopyTables(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]string, 0, len(tables))
+	for table := range tables {
+		list = append(list, table)
+	}
+	sort.Strings(list)
+	return list, nil
+}
+
+func resolveAllowedAuthCopyTables(opts RestoreOptions) (map[string]bool, error) {
+	tables := map[string]bool{}
+
+	// Explicit override (useful for tests or custom callers).
+	if len(opts.AuthCopyTables) > 0 {
+		for _, table := range opts.AuthCopyTables {
+			normalized := normalizeQualifiedName(table)
+			if strings.HasPrefix(normalized, "auth.") {
+				tables[normalized] = true
+			}
+		}
+		return tables, nil
+	}
+
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+SELECT format('%I.%I', n.nspname, c.relname)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'auth'
+  AND c.relkind IN ('r', 'p')
+  AND has_table_privilege(current_user, format('%I.%I', n.nspname, c.relname), 'INSERT')
+ORDER BY c.relname;`
+
+	args := []string{
+		"-h", opts.Host,
+		"-p", fmt.Sprintf("%d", opts.Port),
+		"-U", opts.User,
+		"-d", opts.Database,
+		"-t", "-A", "-c", query,
+	}
+
+	env := map[string]string{
+		"PGPASSWORD": opts.Password,
+	}
+
+	result, runErr := shell.RunWithEnv(env, psql, args...)
+	if runErr != nil || result.ExitCode != 0 {
+		// Conservative fallback if the privilege query can't run.
+		tables["auth.users"] = true
+		return tables, nil
+	}
+
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		normalized := normalizeQualifiedName(line)
+		if strings.HasPrefix(normalized, "auth.") {
+			tables[normalized] = true
+		}
+	}
+
+	// Always keep users as a fallback safety net.
+	if len(tables) == 0 {
+		tables["auth.users"] = true
+	}
+
+	return tables, nil
+}
+
+func copyTargetTable(copyLine string) string {
+	trimmed := strings.TrimSpace(copyLine)
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "COPY ") {
+		return ""
+	}
+
+	rest := strings.TrimSpace(trimmed[5:])
+	if rest == "" {
+		return ""
+	}
+
+	if idx := strings.IndexAny(rest, " \t("); idx != -1 {
+		rest = rest[:idx]
+	}
+
+	return normalizeQualifiedName(rest)
+}
+
+func normalizeQualifiedName(name string) string {
+	n := strings.TrimSpace(name)
+	n = strings.TrimSuffix(n, ";")
+	n = strings.ReplaceAll(n, `"`, "")
+	return strings.ToLower(n)
+}
+
+func isAllowedCopyTable(table string, allowedAuthCopyTables map[string]bool) bool {
+	if strings.HasPrefix(table, "public.") {
+		return true
+	}
+	if strings.HasPrefix(table, "auth.") {
+		return allowedAuthCopyTables[table]
+	}
+	return table == "supabase_migrations.schema_migrations"
+}
+
+func isAllowedSetvalStatement(line string, allowedAuthCopyTables map[string]bool) bool {
+	trimmed := strings.TrimSpace(line)
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "SELECT PG_CATALOG.SETVAL(") {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "'public.") || strings.Contains(lower, "'supabase_migrations.") {
+		return true
+	}
+
+	if strings.Contains(lower, "'auth.") && len(allowedAuthCopyTables) > 0 {
+		return true
+	}
+
+	return false
 }
 
 // TestConnection tests the database connection.
@@ -280,4 +475,3 @@ func ExecuteSQL(opts RestoreOptions, sql string) (*shell.Result, error) {
 
 	return shell.RunWithEnv(env, psql, args...)
 }
-
