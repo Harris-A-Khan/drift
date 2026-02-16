@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config represents the .drift.yaml configuration file.
@@ -36,6 +36,15 @@ const (
 	ProjectTypeMacOS         = "macos"
 	ProjectTypeMultiplatform = "multiplatform"
 	ProjectTypeWeb           = "web"
+)
+
+const (
+	// DefaultDatabasePoolerHost is the fallback pooler host when no branch-specific host is configured.
+	DefaultDatabasePoolerHost = "aws-0-us-east-1.pooler.supabase.com"
+	// DefaultDatabasePoolerPort is the default transaction pooler port.
+	DefaultDatabasePoolerPort = 6543
+	// DefaultDatabaseDirectPort is the default direct/session database port.
+	DefaultDatabaseDirectPort = 5432
 )
 
 // ProjectConfig holds project-level configuration.
@@ -125,13 +134,53 @@ type WebConfig struct {
 
 // DatabaseConfig holds database connection configuration.
 type DatabaseConfig struct {
-	PoolerHost  string `yaml:"pooler_host" mapstructure:"pooler_host"`
-	PoolerPort  int    `yaml:"pooler_port" mapstructure:"pooler_port"`
-	DirectPort  int    `yaml:"direct_port" mapstructure:"direct_port"`
-	RequireSSL  bool   `yaml:"require_ssl" mapstructure:"require_ssl"`
-	DumpFormat  string `yaml:"dump_format" mapstructure:"dump_format"`   // custom, plain, directory, tar
-	BackupDir   string `yaml:"backup_dir" mapstructure:"backup_dir"`     // local backup directory
-	PromptFresh bool   `yaml:"prompt_fresh" mapstructure:"prompt_fresh"` // prompt when backup is stale
+	PoolerHost        string            `yaml:"pooler_host" mapstructure:"pooler_host"`
+	BranchPoolerHosts map[string]string `yaml:"branch_pooler_hosts" mapstructure:"branch_pooler_hosts"`
+	PoolerPort        int               `yaml:"pooler_port" mapstructure:"pooler_port"`
+	DirectPort        int               `yaml:"direct_port" mapstructure:"direct_port"`
+	RequireSSL        bool              `yaml:"require_ssl" mapstructure:"require_ssl"`
+	DumpFormat        string            `yaml:"dump_format" mapstructure:"dump_format"`   // custom, plain, directory, tar
+	BackupDir         string            `yaml:"backup_dir" mapstructure:"backup_dir"`     // local backup directory
+	PromptFresh       bool              `yaml:"prompt_fresh" mapstructure:"prompt_fresh"` // prompt when backup is stale
+}
+
+// GetPoolerHostForBranch resolves the pooler host for a git branch/environment label.
+// Lookup order:
+// 1) exact branch key
+// 2) lower-cased branch key
+// 3) prefix aliases (e.g. feature/foo -> feature)
+// 4) environment aliases (production/main, development/dev, feature/preview)
+// 5) database.pooler_host default
+func (d *DatabaseConfig) GetPoolerHostForBranch(branch string) string {
+	defaultHost := DefaultDatabasePoolerHost
+	if d != nil {
+		if configured := strings.TrimSpace(d.PoolerHost); configured != "" {
+			defaultHost = configured
+		}
+	}
+
+	if d == nil || len(d.BranchPoolerHosts) == 0 {
+		return defaultHost
+	}
+
+	for _, key := range poolerHostLookupKeys(branch) {
+		if host, ok := lookupMapValueCaseInsensitive(d.BranchPoolerHosts, key); ok {
+			host = strings.TrimSpace(host)
+			if host != "" {
+				return host
+			}
+		}
+	}
+
+	return defaultHost
+}
+
+// GetPoolerPort returns the configured pooler port or the default.
+func (d *DatabaseConfig) GetPoolerPort() int {
+	if d == nil || d.PoolerPort == 0 {
+		return DefaultDatabasePoolerPort
+	}
+	return d.PoolerPort
 }
 
 // BackupConfig holds backup storage configuration.
@@ -178,17 +227,15 @@ func Load() (*Config, error) {
 
 // LoadFromPath loads configuration from a specific path.
 func LoadFromPath(configPath string) (*Config, error) {
-	v := viper.New()
-	v.SetConfigFile(configPath)
-	v.SetConfigType("yaml")
-
-	if err := v.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
-
 	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	if strings.TrimSpace(string(data)) != "" {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
+		}
 	}
 
 	cfg.configPath = configPath
@@ -469,6 +516,69 @@ func environmentLookupKeys(environment string) []string {
 	}
 
 	return keys
+}
+
+func poolerHostLookupKeys(branch string) []string {
+	raw := strings.TrimSpace(branch)
+	if raw == "" {
+		return nil
+	}
+
+	lower := strings.ToLower(raw)
+	keys := []string{raw}
+	if lower != raw {
+		keys = append(keys, lower)
+	}
+
+	if idx := strings.Index(lower, "/"); idx > 0 {
+		prefix := lower[:idx]
+		if !containsString(keys, prefix) {
+			keys = append(keys, prefix)
+		}
+	}
+
+	addAlias := func(alias string) {
+		if alias == "" || containsString(keys, alias) {
+			return
+		}
+		keys = append(keys, alias)
+	}
+
+	switch {
+	case lower == "main" || lower == "master" || lower == "prod" || lower == "production":
+		addAlias("production")
+		addAlias("main")
+		addAlias("master")
+		addAlias("prod")
+	case lower == "dev" || lower == "development":
+		addAlias("development")
+		addAlias("dev")
+	case lower == "feature" || lower == "preview" || strings.HasPrefix(lower, "feature/"):
+		addAlias("feature")
+		addAlias("preview")
+		// Feature branches often reuse development pooler hosts.
+		addAlias("development")
+	}
+
+	return keys
+}
+
+func lookupMapValueCaseInsensitive(values map[string]string, key string) (string, bool) {
+	if values == nil {
+		return "", false
+	}
+
+	if value, ok := values[key]; ok {
+		return value, true
+	}
+
+	for existingKey, value := range values {
+		if strings.EqualFold(existingKey, key) {
+			return value, true
+		}
+	}
+
+	return "", false
 }
 
 func containsString(values []string, target string) bool {

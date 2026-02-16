@@ -96,6 +96,7 @@ var (
 	dbInputFlag      string
 	dbPasswordFlag   string
 	dbPushPoolerMode string
+	dbPushCopyScope  string
 	dbSeedSource     string
 	dbSeedTables     string
 )
@@ -105,6 +106,7 @@ func init() {
 	dbPushCmd.Flags().StringVarP(&dbInputFlag, "input", "i", "", "Input backup file")
 	dbPushCmd.Flags().StringVar(&dbPasswordFlag, "password", "", "Target database password (or use env var)")
 	dbPushCmd.Flags().StringVar(&dbPushPoolerMode, "pooler-mode", "prompt", "Pooler mode for restore (prompt|transaction|session)")
+	dbPushCmd.Flags().StringVar(&dbPushCopyScope, "copy-scope", "prompt", "Copy scope for plain SQL restore (prompt|safe|all)")
 	dbSeedCmd.Flags().StringVar(&dbSeedSource, "source", "dev", "Source environment (prod|dev)")
 	dbSeedCmd.Flags().StringVar(&dbSeedTables, "tables", "", "Comma-separated list of public tables to include")
 
@@ -192,6 +194,36 @@ func poolerPortForMode(mode string) int {
 	return 6543
 }
 
+func selectDbPushCopyScope() (string, error) {
+	scope := strings.ToLower(strings.TrimSpace(dbPushCopyScope))
+	switch scope {
+	case "safe", "all":
+		return scope, nil
+	case "", "prompt":
+		if IsYes() {
+			// Non-interactive mode: prefer safe/default behavior.
+			return "safe", nil
+		}
+
+		options := []string{
+			"safe (recommended) - public + allowed auth + migrations",
+			"all (best effort) - all insertable tables on target",
+		}
+
+		selected, err := ui.PromptSelect("Select restore copy scope", options)
+		if err != nil {
+			return "", fmt.Errorf("copy scope selection cancelled: %w", err)
+		}
+
+		if strings.HasPrefix(strings.ToLower(selected), "all") {
+			return "all", nil
+		}
+		return "safe", nil
+	default:
+		return "", fmt.Errorf("invalid --copy-scope value %q (use prompt, safe, or all)", dbPushCopyScope)
+	}
+}
+
 func runDbDump(cmd *cobra.Command, args []string) error {
 	if !RequireInit() {
 		return nil
@@ -260,7 +292,7 @@ func runDbDump(cmd *cobra.Command, args []string) error {
 		poolerHost = connInfo.PoolerHost
 	} else {
 		// Fallback to config (shouldn't happen if API works)
-		poolerHost = cfg.Database.PoolerHost
+		poolerHost = cfg.Database.GetPoolerHostForBranch(gitBranch)
 	}
 
 	// Use session mode (port 5432) for pg_dump
@@ -605,7 +637,7 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		poolerHost = connInfo.PoolerHost
 	} else {
 		// Fallback to config (shouldn't happen if API works)
-		poolerHost = cfg.Database.PoolerHost
+		poolerHost = cfg.Database.GetPoolerHostForBranch(targetGitBranch)
 	}
 
 	poolerMode, err := selectDbPushPoolerMode()
@@ -615,6 +647,10 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 
 	poolerPort := poolerPortForMode(poolerMode)
 	poolerUser := fmt.Sprintf("postgres.%s", targetProjectRef)
+	copyScope, err := selectDbPushCopyScope()
+	if err != nil {
+		return err
+	}
 
 	ui.KeyValue("Source", sourceFile)
 	ui.KeyValue("Target", envColorString(targetEnv))
@@ -623,6 +659,11 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 		ui.KeyValue("Pooler Mode", "transaction (recommended)")
 	} else {
 		ui.KeyValue("Pooler Mode", "session")
+	}
+	if copyScope == "all" {
+		ui.KeyValue("Copy Scope", "all insertable tables (best effort)")
+	} else {
+		ui.KeyValue("Copy Scope", "safe default (public + auth + migrations)")
 	}
 	ui.KeyValue("Pooler", fmt.Sprintf("%s:%d", poolerHost, poolerPort))
 
@@ -655,18 +696,23 @@ func runDbPush(cmd *cobra.Command, args []string) error {
 	// Use a single transaction so transaction-pooler mode keeps one backend
 	// for the full restore and session settings apply consistently.
 	opts.SingleTxn = true
+	opts.CopyAllInsertableTables = copyScope == "all"
 
 	// Resolve auth table copy scope up front so it's visible before restore.
-	authCopyTables, authTableErr := database.ResolveAllowedAuthCopyTables(opts)
-	if authTableErr != nil {
-		ui.Warning(fmt.Sprintf("Could not resolve auth copy tables ahead of restore: %v", authTableErr))
-	} else {
-		opts.AuthCopyTables = authCopyTables
-		if len(authCopyTables) == 0 {
-			ui.KeyValue("Auth Copy Tables", "none")
+	if copyScope == "safe" {
+		authCopyTables, authTableErr := database.ResolveAllowedAuthCopyTables(opts)
+		if authTableErr != nil {
+			ui.Warning(fmt.Sprintf("Could not resolve auth copy tables ahead of restore: %v", authTableErr))
 		} else {
-			ui.KeyValue("Auth Copy Tables", strings.Join(authCopyTables, ", "))
+			opts.AuthCopyTables = authCopyTables
+			if len(authCopyTables) == 0 {
+				ui.KeyValue("Auth Copy Tables", "none")
+			} else {
+				ui.KeyValue("Auth Copy Tables", strings.Join(authCopyTables, ", "))
+			}
 		}
+	} else {
+		ui.Warning("All-scope restore may still skip tables without INSERT privilege on target")
 	}
 
 	// Perform restore
@@ -799,7 +845,7 @@ func runDbSeed(cmd *cobra.Command, args []string) error {
 	if connInfo != nil && connInfo.PoolerHost != "" {
 		poolerHost = connInfo.PoolerHost
 	} else {
-		poolerHost = cfg.Database.PoolerHost
+		poolerHost = cfg.Database.GetPoolerHostForBranch(gitBranch)
 	}
 
 	poolerPort := 5432

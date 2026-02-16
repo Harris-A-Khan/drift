@@ -115,3 +115,100 @@ func TestMigrationTimestampFromFilename(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreOptionsFromDBURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		dbURL   string
+		wantErr bool
+		want    struct {
+			host     string
+			port     int
+			user     string
+			password string
+			database string
+		}
+	}{
+		{
+			name:  "full URL",
+			dbURL: "postgresql://postgres.project:secret@aws-1-us-east-2.pooler.supabase.com:5432/postgres?connect_timeout=10",
+			want: struct {
+				host     string
+				port     int
+				user     string
+				password string
+				database string
+			}{
+				host:     "aws-1-us-east-2.pooler.supabase.com",
+				port:     5432,
+				user:     "postgres.project",
+				password: "secret",
+				database: "postgres",
+			},
+		},
+		{
+			name:  "defaults database and port",
+			dbURL: "postgresql://postgres.project:secret@aws-1-us-east-2.pooler.supabase.com",
+			want: struct {
+				host     string
+				port     int
+				user     string
+				password string
+				database string
+			}{
+				host:     "aws-1-us-east-2.pooler.supabase.com",
+				port:     5432,
+				user:     "postgres.project",
+				password: "secret",
+				database: "postgres",
+			},
+		},
+		{
+			name:    "invalid URL",
+			dbURL:   "://bad-url",
+			wantErr: true,
+		},
+		{
+			name:    "missing host",
+			dbURL:   "postgresql:///postgres",
+			wantErr: true,
+		},
+		{
+			name:    "invalid port",
+			dbURL:   "postgresql://postgres:secret@localhost:abc/postgres",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := restoreOptionsFromDBURL(tt.dbURL)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("restoreOptionsFromDBURL(%q) expected error", tt.dbURL)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("restoreOptionsFromDBURL(%q) error = %v", tt.dbURL, err)
+			}
+
+			if got.Host != tt.want.host {
+				t.Fatalf("Host = %q, want %q", got.Host, tt.want.host)
+			}
+			if got.Port != tt.want.port {
+				t.Fatalf("Port = %d, want %d", got.Port, tt.want.port)
+			}
+			if got.User != tt.want.user {
+				t.Fatalf("User = %q, want %q", got.User, tt.want.user)
+			}
+			if got.Password != tt.want.password {
+				t.Fatalf("Password = %q, want %q", got.Password, tt.want.password)
+			}
+			if got.Database != tt.want.database {
+				t.Fatalf("Database = %q, want %q", got.Database, tt.want.database)
+			}
+		})
+	}
+}

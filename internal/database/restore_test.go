@@ -15,6 +15,14 @@ func allowedAuthTablesForTest(tables ...string) map[string]bool {
 	return m
 }
 
+func allowedAllTablesForTest(tables ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, table := range tables {
+		m[normalizeQualifiedName(table)] = true
+	}
+	return m
+}
+
 func TestPreprocessBackupFile_RemovesRestrictCommands(t *testing.T) {
 	inputDir := t.TempDir()
 	inputPath := filepath.Join(inputDir, "input.sql")
@@ -293,6 +301,64 @@ func TestPreprocessBackupFile_RespectsAllowedAuthTables(t *testing.T) {
 	}
 	if !strings.Contains(processed, "TRUNCATE TABLE auth.sso_domains CASCADE;") {
 		t.Fatalf("processed file should include truncate for copied auth.sso_domains")
+	}
+}
+
+func TestPreprocessBackupFileWithScope_AllowsNonPublicWhenEnabled(t *testing.T) {
+	inputDir := t.TempDir()
+	inputPath := filepath.Join(inputDir, "input.sql")
+	input := strings.Join([]string{
+		"COPY storage.vector_indexes (id, name) FROM stdin;",
+		"storage_row_1\tidx_name",
+		"\\.",
+		"COPY public.users (id, username) FROM stdin;",
+		"public_row_1\ttaha",
+		"\\.",
+		"",
+	}, "\n")
+
+	if err := os.WriteFile(inputPath, []byte(input), 0644); err != nil {
+		t.Fatalf("failed to write input file: %v", err)
+	}
+
+	allowedAll := allowedAllTablesForTest("storage.vector_indexes", "public.users")
+	processedPath, err := preprocessBackupFileWithScope(inputPath, nil, allowedAll)
+	if err != nil {
+		t.Fatalf("preprocessBackupFileWithScope() error = %v", err)
+	}
+	defer os.Remove(processedPath)
+
+	processedBytes, err := os.ReadFile(processedPath)
+	if err != nil {
+		t.Fatalf("failed to read processed file: %v", err)
+	}
+	processed := string(processedBytes)
+
+	if !strings.Contains(processed, "COPY storage.vector_indexes") {
+		t.Fatalf("all-scope preprocessing should keep allowed storage table copy")
+	}
+	if !strings.Contains(processed, "storage_row_1\tidx_name") {
+		t.Fatalf("all-scope preprocessing should keep allowed storage table data")
+	}
+	if !strings.Contains(processed, "TRUNCATE TABLE storage.vector_indexes CASCADE;") {
+		t.Fatalf("all-scope preprocessing should include truncate for allowed storage table")
+	}
+	if !strings.Contains(processed, "COPY public.users") {
+		t.Fatalf("all-scope preprocessing should keep allowed public table copy")
+	}
+}
+
+func TestIsAllowedSetvalStatement_AllScope(t *testing.T) {
+	allowedAll := allowedAllTablesForTest("storage.vector_indexes")
+
+	if !isAllowedSetvalStatement("SELECT pg_catalog.setval('storage.vector_indexes_id_seq', 42, true);", nil, allowedAll) {
+		t.Fatalf("expected non-system setval to be allowed in all-scope mode")
+	}
+	if isAllowedSetvalStatement("SELECT pg_catalog.setval('pg_catalog.some_seq', 1, true);", nil, allowedAll) {
+		t.Fatalf("expected pg_catalog setval to be blocked in all-scope mode")
+	}
+	if isAllowedSetvalStatement("SELECT pg_catalog.setval('information_schema.some_seq', 1, true);", nil, allowedAll) {
+		t.Fatalf("expected information_schema setval to be blocked in all-scope mode")
 	}
 }
 

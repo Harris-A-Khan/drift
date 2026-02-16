@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,17 +61,16 @@ func LoadLocalFromPath(localPath string) (*LocalConfig, error) {
 		return &LocalConfig{}, nil
 	}
 
-	v := viper.New()
-	v.SetConfigFile(localPath)
-	v.SetConfigType("yaml")
-
-	if err := v.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(localPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read local config file: %w", err)
 	}
 
 	var cfg LocalConfig
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse local config file: %w", err)
+	if strings.TrimSpace(string(data)) != "" {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse local config file: %w", err)
+		}
 	}
 
 	return &cfg, nil

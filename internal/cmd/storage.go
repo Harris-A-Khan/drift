@@ -244,9 +244,9 @@ func setupStorageRLS(cfg *config.Config, projectRef, bucket string) error {
 	}
 
 	// Build connection string
-	poolerHost := cfg.Database.PoolerHost
+	poolerHost := cfg.Database.GetPoolerHostForBranch("production")
 	if poolerHost == "" {
-		poolerHost = "aws-0-us-east-1.pooler.supabase.com"
+		poolerHost = config.DefaultDatabasePoolerHost
 	}
 
 	connString := fmt.Sprintf(
@@ -254,7 +254,7 @@ func setupStorageRLS(cfg *config.Config, projectRef, bucket string) error {
 		projectRef,
 		password,
 		poolerHost,
-		cfg.Database.PoolerPort,
+		cfg.Database.GetPoolerPort(),
 	)
 
 	// RLS policy SQL

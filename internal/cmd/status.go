@@ -546,11 +546,26 @@ func getDbURLForBranch(info *supabase.BranchInfo) string {
 
 	// For production, require explicit password and build URL
 	if info.Environment == supabase.EnvProduction {
+		cfg := config.LoadOrDefault()
+		poolerHost := cfg.Database.GetPoolerHostForBranch(info.SupabaseBranch.GitBranch)
+		poolerPort := cfg.Database.GetPoolerPort()
+
+		// Prefer host/port from branch connection info so regional projects connect correctly.
+		client := supabase.NewClient()
+		if connInfo, err := client.GetBranchConnectionInfo(info.SupabaseBranch.GitBranch); err == nil && connInfo != nil {
+			if connInfo.PoolerHost != "" {
+				poolerHost = connInfo.PoolerHost
+			}
+			if connInfo.PoolerPort != 0 {
+				poolerPort = connInfo.PoolerPort
+			}
+		}
+
 		pw := os.Getenv("PROD_PASSWORD")
 		if pw == "" {
 			return ""
 		}
-		return fmt.Sprintf("postgresql://postgres.%s:%s@aws-0-us-east-1.pooler.supabase.com:6543/postgres", info.ProjectRef, pw)
+		return fmt.Sprintf("postgresql://postgres.%s:%s@%s:%d/postgres", info.ProjectRef, pw, poolerHost, poolerPort)
 	}
 
 	// For non-production, try experimental API

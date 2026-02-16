@@ -40,13 +40,14 @@ func DefaultConfig() *Config {
 			EnvOutput: ".env.local",
 		},
 		Database: DatabaseConfig{
-			PoolerHost:  "aws-0-us-east-1.pooler.supabase.com",
-			PoolerPort:  6543,
-			DirectPort:  5432,
-			RequireSSL:  true,
-			DumpFormat:  "custom",
-			BackupDir:   "backups",
-			PromptFresh: true,
+			PoolerHost:        DefaultDatabasePoolerHost,
+			BranchPoolerHosts: map[string]string{},
+			PoolerPort:        DefaultDatabasePoolerPort,
+			DirectPort:        DefaultDatabaseDirectPort,
+			RequireSSL:        true,
+			DumpFormat:        "custom",
+			BackupDir:         "backups",
+			PromptFresh:       true,
 		},
 		Backup: BackupConfig{
 			Provider:      "supabase",
@@ -117,6 +118,9 @@ func MergeWithDefaults(cfg *Config) *Config {
 	// Database defaults
 	if cfg.Database.PoolerHost == "" {
 		cfg.Database.PoolerHost = defaults.Database.PoolerHost
+	}
+	if cfg.Database.BranchPoolerHosts == nil {
+		cfg.Database.BranchPoolerHosts = map[string]string{}
 	}
 	if cfg.Database.PoolerPort == 0 {
 		cfg.Database.PoolerPort = defaults.Database.PoolerPort

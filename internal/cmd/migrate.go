@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/undrift/drift/internal/config"
+	"github.com/undrift/drift/internal/database"
 	"github.com/undrift/drift/internal/git"
 	"github.com/undrift/drift/internal/supabase"
 	"github.com/undrift/drift/internal/ui"
@@ -188,12 +191,19 @@ func runMigratePush(cmd *cobra.Command, args []string) error {
 
 	ui.NewLine()
 
+	// Some migrations alter the supabase_realtime publication directly.
+	// Ensure it exists before push so these migrations don't fail on branches
+	// where Supabase hasn't created it yet.
+	dbURL, urlErr := getDbURLForProject(info.ProjectRef)
+	if urlErr == nil && dbURL != "" {
+		if err := ensureSupabaseRealtimePublication(dbURL); err != nil {
+			ui.Warning(fmt.Sprintf("Could not ensure realtime publication: %v", err))
+		}
+	}
+
 	// Push migrations
 	sp = ui.NewSpinner("Pushing migrations")
 	sp.Start()
-
-	// Get database URL for this branch (same method used for listing migrations)
-	dbURL, urlErr := getDbURLForProject(info.ProjectRef)
 
 	var result *shell.Result
 	if urlErr == nil && dbURL != "" {
@@ -357,12 +367,42 @@ func getDbURLForProject(projectRef string) (string, error) {
 
 	// For production, require explicit password and build URL
 	if isProduction {
+		cfg := config.LoadOrDefault()
+		poolerHost := cfg.Database.GetPoolerHostForBranch(gitBranch)
+		poolerPort := cfg.Database.GetPoolerPort()
+
+		// Use experimental API to discover the correct regional pooler host.
+		if connInfo, err := client.GetBranchConnectionInfo(gitBranch); err == nil && connInfo != nil {
+			if connInfo.PoolerHost != "" {
+				poolerHost = connInfo.PoolerHost
+			}
+			if connInfo.PoolerPort != 0 {
+				poolerPort = connInfo.PoolerPort
+			}
+		}
+
 		pw := os.Getenv("PROD_PASSWORD")
 		if pw == "" {
-			return "", fmt.Errorf("production requires PROD_PASSWORD environment variable")
+			if IsYes() {
+				return "", fmt.Errorf("production requires PROD_PASSWORD environment variable in non-interactive mode")
+			}
+
+			var err error
+			pw, err = ui.PromptPassword("Enter production database password")
+			if err != nil {
+				return "", fmt.Errorf("could not read production database password: %w", err)
+			}
+
+			pw = strings.TrimSpace(pw)
+			if pw == "" {
+				return "", fmt.Errorf("production database password is required")
+			}
+
+			// Cache for subsequent production DB lookups in this process.
+			_ = os.Setenv("PROD_PASSWORD", pw)
 		}
 		// Build production connection URL
-		return fmt.Sprintf("postgresql://postgres.%s:%s@aws-0-us-east-1.pooler.supabase.com:6543/postgres", projectRef, pw), nil
+		return fmt.Sprintf("postgresql://postgres.%s:%s@%s:%d/postgres", projectRef, pw, poolerHost, poolerPort), nil
 	}
 
 	// For non-production, get URL from experimental API
@@ -380,6 +420,76 @@ func getDbURLForProject(projectRef string) (string, error) {
 	url := strings.Replace(connInfo.PostgresURL, ":6543/", ":5432/", 1)
 
 	return url, nil
+}
+
+func ensureSupabaseRealtimePublication(dbURL string) error {
+	opts, err := restoreOptionsFromDBURL(dbURL)
+	if err != nil {
+		return err
+	}
+
+	sql := `
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+    ) THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+END $$;`
+
+	result, err := database.ExecuteSQL(opts, sql)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return fmt.Errorf("empty result from publication check")
+	}
+	if result.ExitCode != 0 {
+		if result.Stderr != "" {
+			return fmt.Errorf(strings.TrimSpace(result.Stderr))
+		}
+		return fmt.Errorf("psql exited with code %d while ensuring publication", result.ExitCode)
+	}
+
+	return nil
+}
+
+func restoreOptionsFromDBURL(dbURL string) (database.RestoreOptions, error) {
+	opts := database.DefaultRestoreOptions()
+
+	parsed, err := url.Parse(dbURL)
+	if err != nil {
+		return opts, fmt.Errorf("invalid db url: %w", err)
+	}
+	if parsed.Hostname() == "" {
+		return opts, fmt.Errorf("invalid db url: missing host")
+	}
+
+	opts.Host = parsed.Hostname()
+	opts.Database = strings.TrimPrefix(parsed.Path, "/")
+	if opts.Database == "" {
+		opts.Database = "postgres"
+	}
+
+	if parsed.Port() != "" {
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil {
+			return opts, fmt.Errorf("invalid db url port %q: %w", parsed.Port(), err)
+		}
+		opts.Port = port
+	}
+
+	if parsed.User != nil {
+		if username := parsed.User.Username(); username != "" {
+			opts.User = username
+		}
+		if password, ok := parsed.User.Password(); ok {
+			opts.Password = password
+		}
+	}
+
+	return opts, nil
 }
 
 // findPendingMigrations returns migrations that exist locally but aren't applied remotely.

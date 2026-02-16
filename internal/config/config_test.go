@@ -154,6 +154,55 @@ func TestMergeWithDefaults_PreservesExistingValues(t *testing.T) {
 	}
 }
 
+func TestDatabaseConfig_GetPoolerHostForBranch_DefaultHost(t *testing.T) {
+	db := &DatabaseConfig{
+		PoolerHost: "default.pooler.supabase.com",
+	}
+
+	if got := db.GetPoolerHostForBranch("main"); got != "default.pooler.supabase.com" {
+		t.Fatalf("GetPoolerHostForBranch(main) = %q, want %q", got, "default.pooler.supabase.com")
+	}
+}
+
+func TestDatabaseConfig_GetPoolerHostForBranch_ExactOverride(t *testing.T) {
+	db := &DatabaseConfig{
+		PoolerHost: "default.pooler.supabase.com",
+		BranchPoolerHosts: map[string]string{
+			"development": "dev.pooler.supabase.com",
+		},
+	}
+
+	if got := db.GetPoolerHostForBranch("development"); got != "dev.pooler.supabase.com" {
+		t.Fatalf("GetPoolerHostForBranch(development) = %q, want %q", got, "dev.pooler.supabase.com")
+	}
+}
+
+func TestDatabaseConfig_GetPoolerHostForBranch_ProductionAlias(t *testing.T) {
+	db := &DatabaseConfig{
+		PoolerHost: "default.pooler.supabase.com",
+		BranchPoolerHosts: map[string]string{
+			"main": "prod.pooler.supabase.com",
+		},
+	}
+
+	if got := db.GetPoolerHostForBranch("production"); got != "prod.pooler.supabase.com" {
+		t.Fatalf("GetPoolerHostForBranch(production) = %q, want %q", got, "prod.pooler.supabase.com")
+	}
+}
+
+func TestDatabaseConfig_GetPoolerHostForBranch_FeatureFallsBackToDevelopment(t *testing.T) {
+	db := &DatabaseConfig{
+		PoolerHost: "default.pooler.supabase.com",
+		BranchPoolerHosts: map[string]string{
+			"development": "dev.pooler.supabase.com",
+		},
+	}
+
+	if got := db.GetPoolerHostForBranch("feature/new-ui"); got != "dev.pooler.supabase.com" {
+		t.Fatalf("GetPoolerHostForBranch(feature/new-ui) = %q, want %q", got, "dev.pooler.supabase.com")
+	}
+}
+
 func TestLoadFromPath_ValidConfig(t *testing.T) {
 	// Create a temp config file
 	tmpDir := t.TempDir()
@@ -171,6 +220,8 @@ supabase:
     - production
 
 database:
+  branch_pooler_hosts:
+    main: aws-1-us-east-2.pooler.supabase.com
   pooler_port: 7777
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -194,9 +245,53 @@ database:
 	if cfg.Database.PoolerPort != 7777 {
 		t.Errorf("LoadFromPath() Database.PoolerPort = %d, want 7777", cfg.Database.PoolerPort)
 	}
+	if cfg.Database.BranchPoolerHosts["main"] != "aws-1-us-east-2.pooler.supabase.com" {
+		t.Errorf("LoadFromPath() Database.BranchPoolerHosts[main] = %q, want %q", cfg.Database.BranchPoolerHosts["main"], "aws-1-us-east-2.pooler.supabase.com")
+	}
 	// Should still have defaults merged
 	if cfg.Database.DirectPort != 5432 {
 		t.Errorf("LoadFromPath() should merge defaults, Database.DirectPort = %d, want 5432", cfg.Database.DirectPort)
+	}
+}
+
+func TestLoadFromPath_PreservesSecretKeyCase(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".drift.yaml")
+
+	content := `
+supabase:
+  default_secrets:
+    ENABLE_DEBUG_SWITCH: "false"
+environments:
+  development:
+    secrets:
+      ENABLE_DEBUG_SWITCH: "true"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	cfg, err := LoadFromPath(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromPath() error = %v", err)
+	}
+
+	if got, ok := cfg.Supabase.DefaultSecrets["ENABLE_DEBUG_SWITCH"]; !ok || got != "false" {
+		t.Fatalf("DefaultSecrets[ENABLE_DEBUG_SWITCH] = %q, ok=%v, want %q, true", got, ok, "false")
+	}
+	if _, ok := cfg.Supabase.DefaultSecrets["enable_debug_switch"]; ok {
+		t.Fatalf("DefaultSecrets unexpectedly contains lower-case key: %v", cfg.Supabase.DefaultSecrets)
+	}
+
+	dev := cfg.GetEnvironmentConfig("Development")
+	if dev == nil {
+		t.Fatal("GetEnvironmentConfig(Development) returned nil")
+	}
+	if got, ok := dev.Secrets["ENABLE_DEBUG_SWITCH"]; !ok || got != "true" {
+		t.Fatalf("Development Secrets[ENABLE_DEBUG_SWITCH] = %q, ok=%v, want %q, true", got, ok, "true")
+	}
+	if _, ok := dev.Secrets["enable_debug_switch"]; ok {
+		t.Fatalf("Development secrets unexpectedly contains lower-case key: %v", dev.Secrets)
 	}
 }
 
@@ -736,6 +831,37 @@ func TestMergeLocalConfig_MergesSkipSecrets(t *testing.T) {
 	}
 	if !containsValue(env.SkipSecrets, "ENABLE_DEBUG_SWITCH") {
 		t.Fatalf("SkipSecrets missing ENABLE_DEBUG_SWITCH: %v", env.SkipSecrets)
+	}
+}
+
+func TestLoadLocalFromPath_PreservesSecretKeyCase(t *testing.T) {
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, ".drift.local.yaml")
+
+	content := `
+environments:
+  development:
+    secrets:
+      ENABLE_DEBUG_SWITCH: "true"
+`
+	if err := os.WriteFile(localPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write local config: %v", err)
+	}
+
+	local, err := LoadLocalFromPath(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocalFromPath() error = %v", err)
+	}
+
+	dev, ok := local.Environments["development"]
+	if !ok {
+		t.Fatalf("local.Environments missing development: %v", local.Environments)
+	}
+	if got, exists := dev.Secrets["ENABLE_DEBUG_SWITCH"]; !exists || got != "true" {
+		t.Fatalf("development Secrets[ENABLE_DEBUG_SWITCH] = %q, exists=%v, want %q, true", got, exists, "true")
+	}
+	if _, exists := dev.Secrets["enable_debug_switch"]; exists {
+		t.Fatalf("development secrets unexpectedly contains lower-case key: %v", dev.Secrets)
 	}
 }
 

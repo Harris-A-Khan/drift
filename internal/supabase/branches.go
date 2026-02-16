@@ -35,7 +35,12 @@ const (
 
 // GetBranches fetches all Supabase branches for the linked project.
 func (c *Client) GetBranches() ([]Branch, error) {
-	result, err := shell.Run("supabase", "branches", "list", "--output", "json")
+	args := []string{"branches", "list", "--output", "json"}
+	if c.ProjectRef != "" {
+		args = append(args, "--project-ref", c.ProjectRef)
+	}
+
+	result, err := shell.Run("supabase", args...)
 	if err != nil {
 		// Check if branching is not enabled
 		if strings.Contains(result.Stderr, "not enabled") || strings.Contains(result.Stdout, "not enabled") {
@@ -71,23 +76,23 @@ func (c *Client) GetBranch(name string) (*Branch, error) {
 // BranchSecrets contains all secrets for a Supabase branch.
 // Available for non-production branches via `supabase branches get`.
 type BranchSecrets struct {
-	PostgresURL           string `json:"POSTGRES_URL"`
-	PostgresURLNonPooling string `json:"POSTGRES_URL_NON_POOLING"`
-	SupabaseAnonKey       string `json:"SUPABASE_ANON_KEY"`
-	SupabaseJWTSecret     string `json:"SUPABASE_JWT_SECRET"`
+	PostgresURL            string `json:"POSTGRES_URL"`
+	PostgresURLNonPooling  string `json:"POSTGRES_URL_NON_POOLING"`
+	SupabaseAnonKey        string `json:"SUPABASE_ANON_KEY"`
+	SupabaseJWTSecret      string `json:"SUPABASE_JWT_SECRET"`
 	SupabaseServiceRoleKey string `json:"SUPABASE_SERVICE_ROLE_KEY"`
-	SupabaseURL           string `json:"SUPABASE_URL"`
+	SupabaseURL            string `json:"SUPABASE_URL"`
 }
 
 // BranchConnectionInfo contains parsed connection information from the experimental API.
 type BranchConnectionInfo struct {
-	PostgresURL           string // Full pooler connection URL (transaction mode, port 6543)
-	PostgresURLNonPooling string // Direct connection URL (IPv6 only)
-	PoolerHost            string // e.g., aws-1-us-east-2.pooler.supabase.com
-	PoolerPort            int    // 6543 for transaction mode, 5432 for session mode
-	ProjectRef            string // e.g., gkhvtzjajeykbashnavj
-	SupabaseURL           string // e.g., https://gkhvtzjajeykbashnavj.supabase.co
-	SupabaseAnonKey       string
+	PostgresURL            string // Full pooler connection URL (transaction mode, port 6543)
+	PostgresURLNonPooling  string // Direct connection URL (IPv6 only)
+	PoolerHost             string // e.g., aws-1-us-east-2.pooler.supabase.com
+	PoolerPort             int    // 6543 for transaction mode, 5432 for session mode
+	ProjectRef             string // e.g., gkhvtzjajeykbashnavj
+	SupabaseURL            string // e.g., https://gkhvtzjajeykbashnavj.supabase.co
+	SupabaseAnonKey        string
 	SupabaseServiceRoleKey string
 }
 
@@ -109,10 +114,12 @@ func (c *Client) GetBranchSecrets(branchName string) (*BranchSecrets, error) {
 
 // GetBranchConnectionInfo retrieves connection info using the experimental API.
 // This returns the full pooler URL including the correct regional host.
-// Relies on supabase link - does not pass --project-ref to avoid confusion
-// between main project ref and branch database ref.
+// When Client.ProjectRef is set, the request is scoped to that project.
 func (c *Client) GetBranchConnectionInfo(branchName string) (*BranchConnectionInfo, error) {
 	args := []string{"branches", "get", branchName, "--experimental", "--output", "env"}
+	if c.ProjectRef != "" {
+		args = append(args, "--project-ref", c.ProjectRef)
+	}
 
 	result, err := shell.Run("supabase", args...)
 	if err != nil {
@@ -542,4 +549,3 @@ func (c *Client) FindSimilarBranches(query string) ([]Branch, error) {
 
 	return similar, nil
 }
-

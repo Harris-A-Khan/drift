@@ -27,6 +27,11 @@ type RestoreOptions struct {
 	// plain SQL backups during preprocessing. If empty, Drift auto-detects
 	// auth tables with INSERT privilege on the target branch.
 	AuthCopyTables []string
+
+	// CopyAllInsertableTables switches plain SQL restore preprocessing from
+	// "safe scope" (public + allowed auth + schema_migrations) to an
+	// "all insertable tables" scope based on target INSERT privileges.
+	CopyAllInsertableTables bool
 }
 
 // DefaultRestoreOptions returns default restore options.
@@ -146,9 +151,19 @@ func restoreSQL(opts RestoreOptions) error {
 		return err
 	}
 
-	allowedAuthTables, err := resolveAllowedAuthCopyTables(opts)
-	if err != nil {
-		return fmt.Errorf("failed to resolve auth copy tables: %w", err)
+	allowedAuthTables := map[string]bool{}
+	allowedAllTables := map[string]bool{}
+
+	if opts.CopyAllInsertableTables {
+		allowedAllTables, err = resolveAllInsertableCopyTables(opts)
+		if err != nil {
+			return fmt.Errorf("failed to resolve insertable table scope: %w", err)
+		}
+	} else {
+		allowedAuthTables, err = resolveAllowedAuthCopyTables(opts)
+		if err != nil {
+			return fmt.Errorf("failed to resolve auth copy tables: %w", err)
+		}
 	}
 
 	// Preprocess the backup file to:
@@ -158,7 +173,7 @@ func restoreSQL(opts RestoreOptions) error {
 	//    - auth.* tables with INSERT privileges on target
 	//    - supabase_migrations.schema_migrations
 	// 3. Add session_replication_role = replica to bypass trigger/constraint side effects
-	processedFile, err := preprocessBackupFile(opts.InputFile, allowedAuthTables)
+	processedFile, err := preprocessBackupFileWithScope(opts.InputFile, allowedAuthTables, allowedAllTables)
 	if err != nil {
 		return fmt.Errorf("failed to preprocess backup: %w", err)
 	}
@@ -208,6 +223,10 @@ func restoreSQL(opts RestoreOptions) error {
 // 3. Inserts TRUNCATE ... CASCADE for each copied table before first COPY
 // 4. Wraps content with SET session_replication_role = replica
 func preprocessBackupFile(inputFile string, allowedAuthCopyTables map[string]bool) (string, error) {
+	return preprocessBackupFileWithScope(inputFile, allowedAuthCopyTables, nil)
+}
+
+func preprocessBackupFileWithScope(inputFile string, allowedAuthCopyTables, allowedAllTables map[string]bool) (string, error) {
 	input, err := os.Open(inputFile)
 	if err != nil {
 		return "", err
@@ -256,7 +275,7 @@ func preprocessBackupFile(inputFile string, allowedAuthCopyTables map[string]boo
 
 		if strings.HasPrefix(upper, "COPY ") {
 			table := copyTargetTable(trimmed)
-			if isAllowedCopyTable(table, allowedAuthCopyTables) {
+			if isAllowedCopyTable(table, allowedAuthCopyTables, allowedAllTables) {
 				if !truncatedTables[table] {
 					tempFile.WriteString(fmt.Sprintf("TRUNCATE TABLE %s CASCADE;\n", table))
 					truncatedTables[table] = true
@@ -271,7 +290,7 @@ func preprocessBackupFile(inputFile string, allowedAuthCopyTables map[string]boo
 			continue
 		}
 
-		if isAllowedSetvalStatement(trimmed, allowedAuthCopyTables) {
+		if isAllowedSetvalStatement(trimmed, allowedAuthCopyTables, allowedAllTables) {
 			tempFile.WriteString(line + "\n")
 		}
 	}
@@ -368,6 +387,66 @@ ORDER BY c.relname;`
 	return tables, nil
 }
 
+func resolveAllInsertableCopyTables(opts RestoreOptions) (map[string]bool, error) {
+	tables := map[string]bool{}
+
+	psql, err := findPGTool("psql")
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+SELECT format('%I.%I', n.nspname, c.relname)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  AND n.nspname NOT LIKE 'pg_temp_%'
+  AND has_table_privilege(current_user, format('%I.%I', n.nspname, c.relname), 'INSERT')
+ORDER BY n.nspname, c.relname;`
+
+	args := []string{
+		"-h", opts.Host,
+		"-p", fmt.Sprintf("%d", opts.Port),
+		"-U", opts.User,
+		"-d", opts.Database,
+		"-t", "-A", "-c", query,
+	}
+
+	env := map[string]string{
+		"PGPASSWORD": opts.Password,
+	}
+
+	result, runErr := shell.RunWithEnv(env, psql, args...)
+	if runErr != nil || result.ExitCode != 0 {
+		errMsg := ""
+		if result != nil {
+			errMsg = result.Stderr
+		}
+		if errMsg == "" && runErr != nil {
+			errMsg = runErr.Error()
+		}
+		if errMsg == "" {
+			errMsg = "failed to query insertable tables"
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		normalized := normalizeQualifiedName(line)
+		if normalized != "" {
+			tables[normalized] = true
+		}
+	}
+
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("no insertable tables discovered for current role")
+	}
+
+	return tables, nil
+}
+
 func copyTargetTable(copyLine string) string {
 	trimmed := strings.TrimSpace(copyLine)
 	upper := strings.ToUpper(trimmed)
@@ -394,7 +473,11 @@ func normalizeQualifiedName(name string) string {
 	return strings.ToLower(n)
 }
 
-func isAllowedCopyTable(table string, allowedAuthCopyTables map[string]bool) bool {
+func isAllowedCopyTable(table string, allowedAuthCopyTables, allowedAllTables map[string]bool) bool {
+	if len(allowedAllTables) > 0 {
+		return allowedAllTables[table]
+	}
+
 	if strings.HasPrefix(table, "public.") {
 		return true
 	}
@@ -404,7 +487,7 @@ func isAllowedCopyTable(table string, allowedAuthCopyTables map[string]bool) boo
 	return table == "supabase_migrations.schema_migrations"
 }
 
-func isAllowedSetvalStatement(line string, allowedAuthCopyTables map[string]bool) bool {
+func isAllowedSetvalStatement(line string, allowedAuthCopyTables, allowedAllTables map[string]bool) bool {
 	trimmed := strings.TrimSpace(line)
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "SELECT PG_CATALOG.SETVAL(") {
@@ -412,6 +495,12 @@ func isAllowedSetvalStatement(line string, allowedAuthCopyTables map[string]bool
 	}
 
 	lower := strings.ToLower(trimmed)
+	if len(allowedAllTables) > 0 {
+		return !strings.Contains(lower, "'pg_catalog.") &&
+			!strings.Contains(lower, "'information_schema.") &&
+			!strings.Contains(lower, "'pg_toast")
+	}
+
 	if strings.Contains(lower, "'public.") || strings.Contains(lower, "'supabase_migrations.") {
 		return true
 	}
