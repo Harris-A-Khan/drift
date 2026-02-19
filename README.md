@@ -11,6 +11,8 @@ Opinionated development workflow CLI for Supabase-backed iOS, macOS, and web pro
 ```bash
 brew tap Harris-A-Khan/tap
 brew install drift
+# upgrade to the latest published release
+brew upgrade drift
 ```
 
 ### Quick Install Script
