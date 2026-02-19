@@ -1,6 +1,6 @@
 # drift
 
-Opinionated development workflow CLI for Supabase-backed iOS, macOS, and web projects.
+Opinionated development workflow CLI for Supabase-backed iOS, macOS, and web projects
 
 `drift` standardizes and abstracts common development operations like environment switching, git worktree management, database operations, edge function deployment, and migration pushing into a single, cohesive CLI.
 
