@@ -1,23 +1,74 @@
 name: Update Homebrew Formula
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to process (e.g. v1.4.5)"
+        required: true
+        type: string
 
 jobs:
   update-formula:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        startsWith(github.event.workflow_run.head_branch, 'v')
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Get release info
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            VERSION="${WORKFLOW_RUN_TAG}"
+          else
+            VERSION="${INPUT_TAG}"
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "No tag provided to update-homebrew workflow."
+            exit 1
+          fi
+
+          case "$VERSION" in
+            v*) ;;
+            *)
+              echo "Ref '$VERSION' is not a semver tag (v*)."
+              exit 1
+              ;;
+          esac
+
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
 
       - name: Download checksums
         run: |
-          curl -sL -o checksums.txt "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/checksums.txt"
+          CHECKSUM_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/checksums.txt"
+
+          for attempt in $(seq 1 12); do
+            if curl -fsSL -o checksums.txt "$CHECKSUM_URL"; then
+              break
+            fi
+
+            if [ "$attempt" -eq 12 ]; then
+              echo "Could not download checksums after multiple attempts: $CHECKSUM_URL"
+              exit 1
+            fi
+
+            echo "checksums.txt not available yet, retrying in 10s (attempt $attempt/12)"
+            sleep 10
+          done
+
           cat checksums.txt
 
       - name: Parse checksums
@@ -91,5 +142,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/drift.rb
+          if git diff --cached --quiet; then
+            echo "No formula changes to commit."
+            exit 0
+          fi
           git commit -m "Update drift to ${{ steps.release.outputs.version }}"
           git push
