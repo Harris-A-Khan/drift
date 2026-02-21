@@ -21,16 +21,20 @@ var tmuxCmd = &cobra.Command{
 Without arguments, shows an interactive picker to attach to an existing
 session or create a new one for the current worktree.
 
+When run from inside a tmux session, automatically uses switch-client
+instead of attach, so it works seamlessly in any context.
+
 Sessions are automatically named after worktree directories for easy
 identification.
 
 Use --claude to filter sessions that have Claude Code running.`,
-	Example: `  drift tmux              # Interactive session picker
+	Example: `  drift tmux              # Interactive session picker (attach or switch)
   drift tmux list         # List all sessions
   drift tmux list --claude # List only sessions with Claude Code
   drift tmux new          # Create session for current worktree
-  drift tmux attach       # Attach to session (interactive)
-  drift tmux attach --claude # Attach to Claude session
+  drift tmux attach       # Attach to session (from outside tmux)
+  drift tmux switch       # Switch session (from inside tmux)
+  drift tmux switch --claude # Switch to Claude session
   drift tmux kill         # Kill a session (interactive)`,
 	RunE: runTmuxInteractive,
 }
@@ -59,6 +63,14 @@ var tmuxAttachCmd = &cobra.Command{
 	RunE:  runTmuxAttach,
 }
 
+var tmuxSwitchCmd = &cobra.Command{
+	Use:   "switch [name]",
+	Short: "Switch to another tmux session (from inside tmux)",
+	Long:  `Switch to another tmux session. Must be run from inside a tmux session. If no name is provided, shows an interactive picker excluding the current session.`,
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runTmuxSwitch,
+}
+
 var tmuxKillCmd = &cobra.Command{
 	Use:   "kill [name]",
 	Short: "Kill a tmux session",
@@ -79,10 +91,12 @@ func init() {
 	tmuxCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Filter to sessions with Claude Code running")
 	tmuxListCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Only show sessions with Claude Code running")
 	tmuxAttachCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Only show sessions with Claude Code running")
+	tmuxSwitchCmd.Flags().BoolVar(&tmuxClaudeFlag, "claude", false, "Only show sessions with Claude Code running")
 
 	tmuxCmd.AddCommand(tmuxListCmd)
 	tmuxCmd.AddCommand(tmuxNewCmd)
 	tmuxCmd.AddCommand(tmuxAttachCmd)
+	tmuxCmd.AddCommand(tmuxSwitchCmd)
 	tmuxCmd.AddCommand(tmuxKillCmd)
 	rootCmd.AddCommand(tmuxCmd)
 }
@@ -237,6 +251,15 @@ func getCurrentWorktreeName() string {
 	return filepath.Base(cwd)
 }
 
+// getCurrentTmuxSession returns the name of the current tmux session.
+func getCurrentTmuxSession() (string, error) {
+	result, err := shell.Run("tmux", "display-message", "-p", "#S")
+	if err != nil || result.ExitCode != 0 {
+		return "", fmt.Errorf("failed to get current tmux session")
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
 func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 	// Check if tmux is installed
 	if !shell.CommandExists("tmux") {
@@ -245,11 +268,12 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("tmux not found")
 	}
 
-	// Check if we're already in a tmux session
-	if os.Getenv("TMUX") != "" {
-		ui.Warning("Already inside a tmux session")
-		ui.Info("Use 'tmux switch-client' or detach first")
-		return nil
+	inTmux := os.Getenv("TMUX") != ""
+
+	// Get current session name if inside tmux (used to exclude from picker)
+	var currentSession string
+	if inTmux {
+		currentSession, _ = getCurrentTmuxSession()
 	}
 
 	sessions, err := listTmuxSessions()
@@ -262,9 +286,24 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 		sessions = filterClaudeSessions(sessions)
 	}
 
+	// Exclude current session when inside tmux
+	if inTmux && currentSession != "" {
+		filtered := make([]TmuxSession, 0, len(sessions))
+		for _, s := range sessions {
+			if s.Name != currentSession {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
 	if len(sessions) == 0 {
 		if tmuxClaudeFlag {
 			ui.Info("No tmux sessions with Claude Code running")
+			return nil
+		}
+		if inTmux {
+			ui.Info("No other tmux sessions to switch to")
 			return nil
 		}
 		// No sessions, create one for current worktree
@@ -274,7 +313,7 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 
 	// Build selection items
 	items := make([]string, 0, len(sessions)+1)
-	if !tmuxClaudeFlag {
+	if !tmuxClaudeFlag && !inTmux {
 		items = append(items, fmt.Sprintf("+ Create new session (%s)", getCurrentWorktreeName()))
 	}
 
@@ -292,6 +331,9 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 
 	// Show interactive picker
 	promptLabel := "Select tmux session"
+	if inTmux {
+		promptLabel = "Switch to tmux session"
+	}
 	if tmuxClaudeFlag {
 		promptLabel = "Select Claude Code session"
 	}
@@ -309,6 +351,16 @@ func runTmuxInteractive(cmd *cobra.Command, args []string) error {
 	sessionName := strings.Split(selected, " ")[0]
 	sessionName = strings.TrimSuffix(sessionName, "🤖")
 	sessionName = strings.TrimSpace(sessionName)
+
+	if inTmux {
+		// Switch to session (server-side operation, non-interactive)
+		ui.Infof("Switching to session: %s", sessionName)
+		result, switchErr := shell.Run("tmux", "switch-client", "-t", sessionName)
+		if switchErr != nil || result.ExitCode != 0 {
+			return fmt.Errorf("failed to switch to session: %s", result.Stderr)
+		}
+		return nil
+	}
 
 	// Attach to session
 	ui.Infof("Attaching to session: %s", sessionName)
@@ -438,7 +490,7 @@ func runTmuxAttach(cmd *cobra.Command, args []string) error {
 	// Check if we're already in a tmux session
 	if os.Getenv("TMUX") != "" {
 		ui.Warning("Already inside a tmux session")
-		ui.Info("Use 'tmux switch-client -t <session>' to switch")
+		ui.Info("Use 'drift tmux switch' to switch sessions")
 		return nil
 	}
 
@@ -496,6 +548,94 @@ func runTmuxAttach(cmd *cobra.Command, args []string) error {
 
 	ui.Infof("Attaching to session: %s", sessionName)
 	return shell.RunInteractive("tmux", "attach-session", "-t", sessionName)
+}
+
+func runTmuxSwitch(cmd *cobra.Command, args []string) error {
+	// Check if tmux is installed
+	if !shell.CommandExists("tmux") {
+		ui.Error("tmux is not installed")
+		ui.Info("Install with: brew install tmux")
+		return fmt.Errorf("tmux not found")
+	}
+
+	// Must be inside tmux
+	if os.Getenv("TMUX") == "" {
+		ui.Error("Not inside a tmux session")
+		ui.Info("Use 'drift tmux attach' to attach from outside tmux")
+		return fmt.Errorf("not inside tmux")
+	}
+
+	currentSession, err := getCurrentTmuxSession()
+	if err != nil {
+		return err
+	}
+
+	sessions, err := listTmuxSessions()
+	if err != nil {
+		return err
+	}
+
+	// Filter by Claude if flag is set
+	if tmuxClaudeFlag {
+		sessions = filterClaudeSessions(sessions)
+	}
+
+	// Exclude current session
+	filtered := make([]TmuxSession, 0, len(sessions))
+	for _, s := range sessions {
+		if s.Name != currentSession {
+			filtered = append(filtered, s)
+		}
+	}
+	sessions = filtered
+
+	if len(sessions) == 0 {
+		if tmuxClaudeFlag {
+			ui.Info("No other tmux sessions with Claude Code running")
+		} else {
+			ui.Info("No other tmux sessions to switch to")
+		}
+		return nil
+	}
+
+	var sessionName string
+	if len(args) > 0 {
+		sessionName = args[0]
+	} else {
+		// Interactive picker
+		items := make([]string, len(sessions))
+		for i, s := range sessions {
+			status := ""
+			if s.Attached {
+				status = " (attached)"
+			}
+			claudeIndicator := ""
+			if s.HasClaude {
+				claudeIndicator = " 🤖"
+			}
+			items[i] = fmt.Sprintf("%s%s [%d windows]%s", s.Name, claudeIndicator, s.Windows, status)
+		}
+
+		promptLabel := "Switch to session"
+		if tmuxClaudeFlag {
+			promptLabel = "Switch to Claude Code session"
+		}
+		selected, err := ui.PromptSelect(promptLabel, items)
+		if err != nil {
+			return err
+		}
+		// Extract session name (handle the 🤖 emoji)
+		sessionName = strings.Split(selected, " ")[0]
+		sessionName = strings.TrimSuffix(sessionName, "🤖")
+		sessionName = strings.TrimSpace(sessionName)
+	}
+
+	ui.Infof("Switching to session: %s", sessionName)
+	result, err := shell.Run("tmux", "switch-client", "-t", sessionName)
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("failed to switch to session: %s", result.Stderr)
+	}
+	return nil
 }
 
 func runTmuxKill(cmd *cobra.Command, args []string) error {

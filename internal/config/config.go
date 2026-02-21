@@ -380,6 +380,28 @@ func (c *Config) GetDeviceByName(name string) *DeviceEntry {
 	return nil
 }
 
+// FindConfigFileFromDir walks up the directory tree from a given start directory looking for .drift.yaml.
+func FindConfigFileFromDir(startDir string) (string, error) {
+	dir := startDir
+	for {
+		configPath := filepath.Join(dir, ".drift.yaml")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath, nil
+		}
+
+		configPath = filepath.Join(dir, ".drift.yml")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf(".drift.yaml not found (searched from %s to root)", startDir)
+		}
+		dir = parent
+	}
+}
+
 // Exists checks if a .drift.yaml file exists in the current or parent directories.
 func Exists() bool {
 	_, err := FindConfigFile()

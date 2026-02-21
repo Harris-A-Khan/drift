@@ -447,7 +447,7 @@ END $$;`
 	}
 	if result.ExitCode != 0 {
 		if result.Stderr != "" {
-			return fmt.Errorf(strings.TrimSpace(result.Stderr))
+			return fmt.Errorf("%s", strings.TrimSpace(result.Stderr))
 		}
 		return fmt.Errorf("psql exited with code %d while ensuring publication", result.ExitCode)
 	}
