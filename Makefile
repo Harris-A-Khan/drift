@@ -23,7 +23,7 @@ all: build
 build:
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -mod=vendor $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/drift
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/drift
 
 ## install: Install drift to /usr/local/bin
 install: build

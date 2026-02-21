@@ -443,7 +443,12 @@ func runTmuxNew(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		sessionName = args[0]
 	} else {
-		sessionName = getCurrentWorktreeName()
+		defaultName := getCurrentWorktreeName()
+		customName, err := ui.PromptString("Session name", defaultName)
+		if err != nil {
+			return err
+		}
+		sessionName = strings.TrimSpace(customName)
 	}
 
 	// Sanitize session name (tmux doesn't like certain characters)

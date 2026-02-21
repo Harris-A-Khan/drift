@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	defaultPollInterval = 3 * time.Second
-	previewCaptureLines = 30
+	defaultPollInterval    = 3 * time.Second
+	previewRefreshInterval = 1 * time.Second
+	minCaptureLines        = 50
 )
 
 // Messages for the bubbletea event loop.
 type (
 	tickMsg        struct{}
+	previewTickMsg struct{}
 	refreshDoneMsg struct{ state DashboardState }
 	panePreviewMsg struct {
 		sessionID string
@@ -72,7 +74,7 @@ func (m Model) WantsNewSession() bool {
 // Init starts the initial refresh. The tick timer starts after the first refresh completes.
 func (m Model) Init() tea.Cmd {
 	m.refreshing = true
-	return refreshCmd()
+	return tea.Batch(refreshCmd(), previewTickCmd())
 }
 
 // Update handles all messages.
@@ -84,6 +86,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.preview.Width = m.rightWidth()
 		m.preview.Height = m.contentHeight() - 2 // leave room for title
 		return m, nil
+
+	case previewTickMsg:
+		// Auto-refresh the preview for the selected session
+		if selected := m.selectedSession(); selected != nil {
+			return m, tea.Batch(capturePaneCmd(selected.TmuxName, m.captureLines()), previewTickCmd())
+		}
+		return m, previewTickCmd()
 
 	case tickMsg:
 		// Only start a refresh if one isn't already running
@@ -112,12 +121,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.flatSessions)-1)
 		}
 
-		// Capture preview for selected session, then restart the poll timer
-		cmds := []tea.Cmd{tickCmd(m.pollInterval)}
-		if selected := m.selectedSession(); selected != nil {
-			cmds = append(cmds, capturePaneCmd(selected.TmuxName))
-		}
-		return m, tea.Batch(cmds...)
+		// Restart the poll timer; preview auto-refreshes via its own tick
+		return m, tickCmd(m.pollInterval)
 
 	case panePreviewMsg:
 		// Only update if still viewing this session
@@ -161,7 +166,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.flatSessions)-1 {
 			m.cursor++
 			if selected := m.selectedSession(); selected != nil {
-				return m, capturePaneCmd(selected.TmuxName)
+				return m, capturePaneCmd(selected.TmuxName, m.captureLines())
 			}
 		}
 		return m, nil
@@ -170,7 +175,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 			if selected := m.selectedSession(); selected != nil {
-				return m, capturePaneCmd(selected.TmuxName)
+				return m, capturePaneCmd(selected.TmuxName, m.captureLines())
 			}
 		}
 		return m, nil
@@ -293,11 +298,28 @@ func (m *Model) toggleExpandAtCursor() {
 	}
 }
 
+// captureLines returns how many lines to capture based on viewport height.
+func (m Model) captureLines() int {
+	if m.height > 0 {
+		lines := m.contentHeight()
+		if lines > minCaptureLines {
+			return lines
+		}
+	}
+	return minCaptureLines
+}
+
 // Commands
 
 func tickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(time.Time) tea.Msg {
 		return tickMsg{}
+	})
+}
+
+func previewTickCmd() tea.Cmd {
+	return tea.Tick(previewRefreshInterval, func(time.Time) tea.Msg {
+		return previewTickMsg{}
 	})
 }
 
@@ -308,9 +330,9 @@ func refreshCmd() tea.Cmd {
 	}
 }
 
-func capturePaneCmd(sessionName string) tea.Cmd {
+func capturePaneCmd(sessionName string, lines int) tea.Cmd {
 	return func() tea.Msg {
-		content := CapturePane(sessionName, previewCaptureLines)
+		content := CapturePane(sessionName, lines)
 		return panePreviewMsg{
 			sessionID: sessionName,
 			content:   content,
