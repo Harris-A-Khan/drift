@@ -50,14 +50,14 @@ func findPGTool(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf(`%s not found in PATH
 
-Install PostgreSQL 17+ (Supabase uses PostgreSQL 17):
-  brew install postgresql@17
+Install the latest version of PostgreSQL:
+  brew install postgresql
 
 Then add to your shell profile (~/.zshrc or ~/.bashrc):
-  export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+  export PATH="$(brew --prefix postgresql)/bin:$PATH"
 
 Or run with PATH prefix:
-  PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH" drift db dump prod`, name)
+  PATH="$(brew --prefix postgresql)/bin:$PATH" drift db dump prod`, name)
 	}
 	return path, nil
 }
@@ -137,7 +137,7 @@ func Dump(opts DumpOptions) error {
 			return fmt.Errorf("connection timed out\n\nThe database server at %s:%d is not responding", opts.Host, opts.Port)
 		}
 		if strings.Contains(stderrLower, "version mismatch") || strings.Contains(stderrLower, "aborting") {
-			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump version must match the server (PostgreSQL 17).\nInstall with: brew install postgresql@17", errMsg)
+			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump must be >= the server version.\nInstall the latest: brew install postgresql", errMsg)
 		}
 
 		return fmt.Errorf("pg_dump failed: %s", errMsg)
@@ -148,7 +148,7 @@ func Dump(opts DumpOptions) error {
 		stderr := strings.ToLower(result.Stderr)
 		if strings.Contains(stderr, "version mismatch") || strings.Contains(stderr, "aborting") {
 			os.Remove(opts.OutputFile)
-			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump version must match the server version (PostgreSQL 17).\nInstall with: brew install postgresql@17", result.Stderr)
+			return fmt.Errorf("pg_dump version mismatch: %s\n\nYour pg_dump must be >= the server version.\nInstall the latest: brew install postgresql", result.Stderr)
 		}
 	}
 
@@ -160,7 +160,7 @@ func Dump(opts DumpOptions) error {
 
 	if info.Size() == 0 {
 		os.Remove(opts.OutputFile)
-		return fmt.Errorf("pg_dump created an empty file - connection may have failed silently. Check:\n  1. Password is correct\n  2. Pooler host is reachable: %s:%d\n  3. pg_dump version matches server (PostgreSQL 17)", opts.Host, opts.Port)
+		return fmt.Errorf("pg_dump created an empty file - connection may have failed silently. Check:\n  1. Password is correct\n  2. Pooler host is reachable: %s:%d\n  3. pg_dump version >= server version (brew install postgresql)", opts.Host, opts.Port)
 	}
 
 	// Minimum size sanity check - a valid dump should be at least 1KB

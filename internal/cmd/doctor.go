@@ -153,8 +153,8 @@ func checkPgTools() checkResult {
 		return checkResult{
 			name:   "pg_dump",
 			status: "error",
-			message: "pg_dump not found in PATH. Install with: brew install postgresql@16\n" +
-				"Then add to your shell profile: export PATH=\"/opt/homebrew/opt/postgresql@16/bin:$PATH\"",
+			message: "pg_dump not found in PATH. Install with: brew install postgresql\n" +
+				"Then add to your shell profile: export PATH=\"$(brew --prefix postgresql)/bin:$PATH\"",
 		}
 	}
 
