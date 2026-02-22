@@ -3,6 +3,8 @@ package cockpit
 import (
 	"time"
 
+	_ "github.com/undrift/drift/internal/preinit" // must init before bubbletea
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

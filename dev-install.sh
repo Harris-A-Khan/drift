@@ -6,8 +6,9 @@ cd "$(dirname "$0")"
 VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
 echo "Building drift ${VERSION}..."
 
-# Clean stale build artifacts
+# Clean stale build artifacts and Go build cache to ensure fresh compilation
 rm -rf bin
+go clean -cache 2>/dev/null || true
 
 # Build
 mkdir -p bin
