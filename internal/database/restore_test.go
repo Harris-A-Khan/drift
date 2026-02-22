@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -345,6 +346,71 @@ func TestPreprocessBackupFileWithScope_AllowsNonPublicWhenEnabled(t *testing.T) 
 	}
 	if !strings.Contains(processed, "COPY public.users") {
 		t.Fatalf("all-scope preprocessing should keep allowed public table copy")
+	}
+}
+
+func TestPreprocessBackupFile_TruncatesBeforeAllCopies(t *testing.T) {
+	// Regression test: when child tables (session_shields) appear before parent
+	// tables (sessions, shields) in alphabetical dump order, the old inline
+	// TRUNCATE approach would wipe already-loaded child data via CASCADE.
+	// The fix emits all TRUNCATEs up front before any COPY blocks.
+	inputDir := t.TempDir()
+	inputPath := filepath.Join(inputDir, "input.sql")
+	input := strings.Join([]string{
+		"COPY public.session_shields (session_id, shield_id) FROM stdin;",
+		"sid1\tshid1",
+		"\\.",
+		"COPY public.sessions (id, user_id) FROM stdin;",
+		"sid1\tuid1",
+		"\\.",
+		"COPY public.shields (id, user_id) FROM stdin;",
+		"shid1\tuid1",
+		"\\.",
+		"",
+	}, "\n")
+
+	if err := os.WriteFile(inputPath, []byte(input), 0644); err != nil {
+		t.Fatalf("failed to write input file: %v", err)
+	}
+
+	processedPath, err := preprocessBackupFile(inputPath, nil)
+	if err != nil {
+		t.Fatalf("preprocessBackupFile() error = %v", err)
+	}
+	defer os.Remove(processedPath)
+
+	processedBytes, err := os.ReadFile(processedPath)
+	if err != nil {
+		t.Fatalf("failed to read processed file: %v", err)
+	}
+	processed := string(processedBytes)
+
+	// All three TRUNCATEs must appear before the first COPY
+	firstCopy := strings.Index(processed, "COPY public.")
+	if firstCopy == -1 {
+		t.Fatalf("processed file should contain COPY statements")
+	}
+
+	for _, table := range []string{"public.session_shields", "public.sessions", "public.shields"} {
+		truncStmt := fmt.Sprintf("TRUNCATE TABLE %s CASCADE;", table)
+		truncIdx := strings.Index(processed, truncStmt)
+		if truncIdx == -1 {
+			t.Fatalf("processed file should contain %s", truncStmt)
+		}
+		if truncIdx >= firstCopy {
+			t.Fatalf("TRUNCATE for %s (pos %d) should appear before first COPY (pos %d)", table, truncIdx, firstCopy)
+		}
+	}
+
+	// All COPY blocks and their data should be present
+	if !strings.Contains(processed, "sid1\tshid1") {
+		t.Fatalf("processed file should contain session_shields data")
+	}
+	if !strings.Contains(processed, "sid1\tuid1") {
+		t.Fatalf("processed file should contain sessions data")
+	}
+	if !strings.Contains(processed, "shid1\tuid1") {
+		t.Fatalf("processed file should contain shields data")
 	}
 }
 

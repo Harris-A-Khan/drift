@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -50,11 +51,28 @@ var configClearBranchCmd = &cobra.Command{
 	RunE:    runConfigClearBranch,
 }
 
+var configInitLocalCmd = &cobra.Command{
+	Use:   "init-local",
+	Short: "Generate a sample .drift.local.yaml file",
+	Long: `Generate a .drift.local.yaml file with commented-out examples for all
+available local configuration options.
+
+This file is gitignored and used for developer-specific settings like
+branch overrides, secret values, device preferences, and editor config.
+
+Will not overwrite an existing .drift.local.yaml unless --force is used.`,
+	Example: `  drift config init-local          # Generate sample local config
+  drift config init-local --force  # Overwrite existing local config`,
+	RunE: runConfigInitLocal,
+}
+
 func init() {
+	configInitLocalCmd.Flags().Bool("force", false, "Overwrite existing .drift.local.yaml")
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetBranchCmd)
 	configCmd.AddCommand(configClearBranchCmd)
 	configCmd.AddCommand(configSetSecretCmd)
+	configCmd.AddCommand(configInitLocalCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
@@ -245,6 +263,41 @@ func runConfigClearBranch(cmd *cobra.Command, args []string) error {
 
 	ui.Success("Cleared local override branch")
 	ui.Infof("Drift will now use automatic branch detection (plus fallback policy)")
+
+	return nil
+}
+
+func runConfigInitLocal(cmd *cobra.Command, args []string) error {
+	if !RequireInit() {
+		return nil
+	}
+
+	force, _ := cmd.Flags().GetBool("force")
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	localPath := filepath.Join(cfg.ProjectRoot(), config.LocalConfigFilename)
+
+	if !force {
+		if _, err := os.Stat(localPath); err == nil {
+			ui.Warningf("%s already exists. Use --force to overwrite.", config.LocalConfigFilename)
+			return nil
+		}
+	}
+
+	if err := config.WriteLocalConfig(localPath); err != nil {
+		return fmt.Errorf("failed to write %s: %w", config.LocalConfigFilename, err)
+	}
+
+	if err := config.AddToGitignore(cfg.ProjectRoot()); err != nil {
+		ui.Warningf("Could not update .gitignore: %v", err)
+	}
+
+	ui.Success(fmt.Sprintf("Generated %s", config.LocalConfigFilename))
+	ui.Infof("Customize it with your developer-specific settings (branch overrides, secrets, preferences)")
 
 	return nil
 }

@@ -227,13 +227,23 @@ func preprocessBackupFile(inputFile string, allowedAuthCopyTables map[string]boo
 }
 
 func preprocessBackupFileWithScope(inputFile string, allowedAuthCopyTables, allowedAllTables map[string]bool) (string, error) {
+	// Two-pass approach: first collect all tables that will be COPYed,
+	// then emit all TRUNCATEs up front before any COPY blocks.
+	//
+	// This prevents TRUNCATE ... CASCADE on a parent table (e.g. sessions)
+	// from wiping child table data (e.g. session_shields, session_runs)
+	// that was already loaded earlier in alphabetical order.
+
+	// --- Pass 1: collect tables ---
+	tablesToCopy := collectCopyTables(inputFile, allowedAuthCopyTables, allowedAllTables)
+
+	// --- Pass 2: write processed file ---
 	input, err := os.Open(inputFile)
 	if err != nil {
 		return "", err
 	}
 	defer input.Close()
 
-	// Create temp file for processed output
 	tempFile, err := os.CreateTemp("", "drift-restore-*.sql")
 	if err != nil {
 		return "", err
@@ -244,13 +254,21 @@ func preprocessBackupFileWithScope(inputFile string, allowedAuthCopyTables, allo
 	tempFile.WriteString("-- Drift: Disable triggers during restore\n")
 	tempFile.WriteString("SET session_replication_role = replica;\n\n")
 
+	// Emit all TRUNCATEs up front so CASCADE doesn't destroy already-loaded data
+	if len(tablesToCopy) > 0 {
+		tempFile.WriteString("-- Drift: Truncate all target tables before loading data\n")
+		for _, table := range tablesToCopy {
+			tempFile.WriteString(fmt.Sprintf("TRUNCATE TABLE %s CASCADE;\n", table))
+		}
+		tempFile.WriteString("\n")
+	}
+
 	scanner := bufio.NewScanner(input)
 	// Increase buffer size for long lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024) // 10MB max line
 	inCopyBlock := false
 	keepCopyBlock := false
-	truncatedTables := map[string]bool{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -276,10 +294,6 @@ func preprocessBackupFileWithScope(inputFile string, allowedAuthCopyTables, allo
 		if strings.HasPrefix(upper, "COPY ") {
 			table := copyTargetTable(trimmed)
 			if isAllowedCopyTable(table, allowedAuthCopyTables, allowedAllTables) {
-				if !truncatedTables[table] {
-					tempFile.WriteString(fmt.Sprintf("TRUNCATE TABLE %s CASCADE;\n", table))
-					truncatedTables[table] = true
-				}
 				tempFile.WriteString(line + "\n")
 				inCopyBlock = true
 				keepCopyBlock = true
@@ -307,6 +321,48 @@ func preprocessBackupFileWithScope(inputFile string, allowedAuthCopyTables, allo
 
 	tempFile.Close()
 	return tempFile.Name(), nil
+}
+
+// collectCopyTables scans the backup file and returns an ordered list of
+// unique table names that will be COPYed (in the order they first appear).
+func collectCopyTables(inputFile string, allowedAuthCopyTables, allowedAllTables map[string]bool) []string {
+	f, err := os.Open(inputFile)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	seen := map[string]bool{}
+	var tables []string
+	inCopy := false
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+
+		if inCopy {
+			if trimmed == "\\." {
+				inCopy = false
+			}
+			continue
+		}
+
+		if strings.HasPrefix(upper, "COPY ") {
+			inCopy = true
+			table := copyTargetTable(trimmed)
+			if table != "" && !seen[table] && isAllowedCopyTable(table, allowedAuthCopyTables, allowedAllTables) {
+				seen[table] = true
+				tables = append(tables, table)
+			}
+		}
+	}
+
+	return tables
 }
 
 // ResolveAllowedAuthCopyTables returns the auth.* tables that Drift will copy
