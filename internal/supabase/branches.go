@@ -49,8 +49,13 @@ func (c *Client) GetBranches() ([]Branch, error) {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
 
+	output := strings.TrimSpace(result.Stdout)
+	if output == "" {
+		return nil, fmt.Errorf("no branch data returned — is the project linked? Run 'supabase link' first")
+	}
+
 	var branches []Branch
-	if err := json.Unmarshal([]byte(result.Stdout), &branches); err != nil {
+	if err := json.Unmarshal([]byte(output), &branches); err != nil {
 		return nil, fmt.Errorf("failed to parse branches: %w", err)
 	}
 
@@ -437,6 +442,42 @@ func (c *Client) DeleteBranch(branchName string) error {
 			errMsg = err.Error()
 		}
 		return fmt.Errorf("failed to delete branch: %s", errMsg)
+	}
+	return nil
+}
+
+// PauseBranch pauses a Supabase preview branch to save costs.
+func (c *Client) PauseBranch(branchName string) error {
+	args := []string{"branches", "disable", branchName}
+	if c.ProjectRef != "" {
+		args = append(args, "--project-ref", c.ProjectRef)
+	}
+
+	result, err := shell.Run("supabase", args...)
+	if err != nil {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return fmt.Errorf("failed to pause branch: %s", errMsg)
+	}
+	return nil
+}
+
+// UnpauseBranch resumes a paused Supabase preview branch.
+func (c *Client) UnpauseBranch(branchName string) error {
+	args := []string{"branches", "enable", branchName}
+	if c.ProjectRef != "" {
+		args = append(args, "--project-ref", c.ProjectRef)
+	}
+
+	result, err := shell.Run("supabase", args...)
+	if err != nil {
+		errMsg := result.Stderr
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return fmt.Errorf("failed to resume branch: %s", errMsg)
 	}
 	return nil
 }
