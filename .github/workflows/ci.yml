@@ -28,4 +28,4 @@ jobs:
         run: make build
 
       - name: Verify binary
-        run: ./bin/drift --version
+        run: ./bin/drift-dev --version
